@@ -38,6 +38,7 @@ impl AddressDB {
         }
         batch.put("last_block".as_bytes(), block_number.to_be_bytes());
         self.db.write(batch)?;
+        self.last_block = block_number;
         Ok(())
     }
 
