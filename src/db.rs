@@ -1,15 +1,42 @@
+use std::collections::HashSet;
+
 use ethers::types::Address;
 use rocksdb::{IteratorMode, WriteBatchWithTransaction, DB};
 
 pub struct AddressDB {
     db: DB,
-    counter: u64,
+    known_set: HashSet<Address>,
+    pub counter: usize,
     pub last_block: u64,
+}
+
+pub struct AddressDBIterator<'a> {
+    inner: rocksdb::DBIterator<'a>,
+}
+
+impl<'a> Iterator for AddressDBIterator<'a> {
+    type Item = (Address, u64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.inner.next() {
+            Some(Ok((key, value))) => {
+                if key.len() != 20 {
+                    return self.next();
+                }
+                Some((
+                    Address::from_slice(&key),
+                    u64::from_be_bytes(value[0..8].try_into().unwrap()),
+                ))
+            }
+            _ => None,
+        }
+    }
 }
 
 impl AddressDB {
     pub fn new(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let db = DB::open_default(path)?;
+
         let last_block = match db.get("last_block".as_bytes())? {
             Some(block) => u64::from_be_bytes(block[0..8].try_into().unwrap()),
             None => {
@@ -20,9 +47,13 @@ impl AddressDB {
         let mut this = Self {
             db,
             last_block,
+            known_set: HashSet::new(),
             counter: 0,
         };
+
+        this.known_set = this.iterator().map(|r| r.0).collect();
         this.counter = this.count();
+
         Ok(this)
     }
 
@@ -33,7 +64,11 @@ impl AddressDB {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut batch = WriteBatchWithTransaction::<false>::default();
         for address in addresses {
-            batch.put(address, (self.counter - 1).to_be_bytes());
+            if address == Address::zero() || self.known_set.contains(&address) {
+                continue;
+            }
+            self.known_set.insert(address);
+            batch.put(address, self.counter.to_be_bytes());
             self.counter += 1;
         }
         batch.put("last_block".as_bytes(), block_number.to_be_bytes());
@@ -42,21 +77,20 @@ impl AddressDB {
         Ok(())
     }
 
-    // pub fn iterate(&self) {
-    //     self.db.iterator(IteratorMode::Start).for_each(|r| {
-    //         if let Ok((key, _)) = r {
-    //             println!("key: {}, value: {}", Address::from_slice(&key), 0);
-    //         }
-    //     });
-    // }
+    pub fn iterator(&self) -> AddressDBIterator {
+        AddressDBIterator {
+            inner: self.db.iterator(IteratorMode::Start),
+        }
+    }
 
-    pub fn count(&self) -> u64 {
-        let mut count = 0;
-        self.db.iterator(IteratorMode::Start).for_each(|r| {
-            if let Ok((_, _)) = r {
-                count += 1;
-            }
+    pub fn get_all(&self, list: &mut Vec<Address>) {
+        self.iterator().for_each(|r| {
+            let (address, index) = r;
+            list[index as usize] = address;
         });
-        return count;
+    }
+
+    fn count(&self) -> usize {
+        self.iterator().count()
     }
 }

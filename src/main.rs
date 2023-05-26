@@ -23,18 +23,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("start indexing {} blocks", count);
             provider.run(count).await
         }
-        "info" => init().expect("failed to initialize").print_info().await,
+        "info" => init()?.print_info().await,
         _ => Ok(print_help()),
     }
 }
 
 fn init() -> Result<Indexer, Box<dyn std::error::Error>> {
     let db = AddressDB::new("db")?;
-    let provider_url = env::var("PROVIDER_RPC_URL").unwrap_or("http://localhost:8545".to_string());
-    println!(
-        "using provider: {} (use PROVIDER_RPC_URL environment variable to override)",
-        provider_url
-    );
+    let provider_env = env::var("PROVIDER_RPC_URL");
+    let provider_url = match provider_env {
+        Ok(provider_url) => provider_url,
+        Err(_) => {
+            println!(
+                "using default provider: http://localhost:8545 (set PROVIDER_RPC_URL to override)"
+            );
+            "http://localhost:8545".to_string()
+        }
+    };
     let provider = Provider::<Http>::try_from(provider_url)?;
     Ok(Indexer::new(db, provider))
 }

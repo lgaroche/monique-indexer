@@ -2,6 +2,9 @@ use std::{cmp, time};
 
 use crate::db::AddressDB;
 use ethers::prelude::*;
+use hex;
+use merkle::MerkleTree;
+use ring::digest;
 
 pub struct Indexer {
     db: AddressDB,
@@ -21,14 +24,16 @@ impl Indexer {
             self.db.last_block,
             (10_000 * self.db.last_block / last_block.as_u64()) as f64 / 100.0
         );
-        println!("unique address count: {}", self.db.count());
+        let root = self.compute_merkle_root();
+        println!("unique address count: {}", self.db.counter);
+        println!("merkle root: {}", root);
         Ok(())
     }
 
     pub async fn run(&mut self, count: u64) -> Result<(), Box<dyn std::error::Error>> {
         let start = cmp::max(self.db.last_block, 46147);
         let mut log_time = time::Instant::now();
-        let mut last_count = self.db.count();
+        let mut last_count = self.db.counter;
         let mut last_block = start;
         let mut times = Vec::with_capacity(count as usize);
 
@@ -49,13 +54,13 @@ impl Indexer {
                 println!(
                     "Block: {} [{} new addresses] [{} blk/s] [rpc: {} ms] [total: {} ms]",
                     block_number,
-                    self.db.count() - last_count,
+                    self.db.counter - last_count,
                     speed.round(),
                     rpc_time as u64 / 1000,
                     total_time as u64 / 1000
                 );
                 log_time = time::Instant::now();
-                last_count = self.db.count();
+                last_count = self.db.counter;
                 last_block = block_number;
             }
         }
@@ -108,15 +113,15 @@ impl Indexer {
             }
         }
 
-        // remove duplicates but keep order
-        let mut unique = Vec::with_capacity(list.len());
-        for address in list {
-            if !unique.contains(&address) {
-                unique.push(address);
-            }
-        }
-        self.db.append(number, unique)?;
+        self.db.append(number, list)?;
 
         Ok((elapsed, start.elapsed().as_micros()))
+    }
+
+    pub fn compute_merkle_root(&self) -> String {
+        let mut list = vec![Address::from([0u8; 20]); self.db.counter];
+        self.db.get_all(&mut list);
+        let tree = MerkleTree::from_vec(&digest::SHA256, list);
+        hex::encode(tree.root_hash()).to_string()
     }
 }

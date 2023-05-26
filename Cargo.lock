@@ -722,6 +722,9 @@ name = "eth3words"
 version = "0.1.0"
 dependencies = [
  "ethers",
+ "hex",
+ "merkle",
+ "ring",
  "rocksdb",
  "serde_json",
  "tokio",
@@ -1747,6 +1750,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d61c719bcfbcf5d62b3a09efa6088de8c54bc0bfcd3ea7ae39fcc186108b8de1"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "merkle"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d61d8271e4bc7a870786aa2bf4a0f75bd2ec235ace835770faab8aeba06b3645"
+dependencies = [
+ "ring",
 ]
 
 [[package]]
