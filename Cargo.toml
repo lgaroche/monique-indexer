@@ -1,0 +1,15 @@
+[package]
+name = "eth3words"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+lto = true          # Enable link-time optimization
+codegen-units = 1   # Reduce number of codegen units to increase optimizations
+
+[dependencies]
+ethers = "2.0.4"
+rocksdb = "0.21.0"
+serde_json = "1.0.96"
+tokio = {version="1.28.1", features=["full"]}
+
