@@ -83,13 +83,6 @@ impl AddressDB {
         }
     }
 
-    pub fn get_all(&self, list: &mut Vec<Address>) {
-        self.iterator().for_each(|r| {
-            let (address, index) = r;
-            list[index as usize] = address;
-        });
-    }
-
     fn count(&self) -> usize {
         self.iterator().count()
     }

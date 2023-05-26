@@ -3,8 +3,10 @@ use std::{cmp, time};
 use crate::db::AddressDB;
 use ethers::prelude::*;
 use hex;
-use merkle::MerkleTree;
-use ring::digest;
+use keccak_hasher::KeccakHasher;
+use memory_db::{HashKey, MemoryDB};
+use reference_trie::ExtensionLayout;
+use trie_db::{TrieDBMutBuilder, TrieHash, TrieMut};
 
 pub struct Indexer {
     db: AddressDB,
@@ -16,7 +18,7 @@ impl Indexer {
         Self { db, provider }
     }
 
-    pub async fn print_info(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn print_info(&self, compute_root: bool) -> Result<(), Box<dyn std::error::Error>> {
         let last_block = self.provider.get_block_number().await?;
         println!("last block known by node: {}", last_block);
         println!(
@@ -24,9 +26,11 @@ impl Indexer {
             self.db.last_block,
             (10_000 * self.db.last_block / last_block.as_u64()) as f64 / 100.0
         );
-        let root = self.compute_merkle_root();
         println!("unique address count: {}", self.db.counter);
-        println!("merkle root: {}", root);
+        if compute_root {
+            let root = self.compute_merkle_root();
+            println!("merkle root: {}", root?);
+        }
         Ok(())
     }
 
@@ -64,7 +68,7 @@ impl Indexer {
                 last_block = block_number;
             }
         }
-        self.print_info().await
+        self.print_info(false).await
     }
 
     pub async fn process_block(
@@ -118,10 +122,15 @@ impl Indexer {
         Ok((elapsed, start.elapsed().as_micros()))
     }
 
-    pub fn compute_merkle_root(&self) -> String {
-        let mut list = vec![Address::from([0u8; 20]); self.db.counter];
-        self.db.get_all(&mut list);
-        let tree = MerkleTree::from_vec(&digest::SHA256, list);
-        hex::encode(tree.root_hash()).to_string()
+    pub fn compute_merkle_root(&self) -> Result<String, Box<dyn std::error::Error>> {
+        println!("computing merkle root for {} addresses", self.db.counter);
+        let mut memdb = MemoryDB::<KeccakHasher, HashKey<_>, _>::default();
+        let mut root = <TrieHash<ExtensionLayout>>::default();
+        let mut trie = TrieDBMutBuilder::<ExtensionLayout>::new(&mut memdb, &mut root).build();
+        for (address, index) in self.db.iterator() {
+            trie.insert(&address.as_bytes(), &index.to_be_bytes())?;
+        }
+        trie.commit();
+        Ok(hex::encode(trie.root()))
     }
 }

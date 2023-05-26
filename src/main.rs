@@ -23,7 +23,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("start indexing {} blocks", count);
             provider.run(count).await
         }
-        "info" => init()?.print_info().await,
+        "info" => init()?.print_info(false).await,
+        "root" => init()?.print_info(true).await,
         _ => Ok(print_help()),
     }
 }
