@@ -34,7 +34,7 @@ impl Indexer {
     }
 
     pub async fn run(&mut self, count: u64) -> Result<(), Box<dyn std::error::Error>> {
-        let start = cmp::max(self.db.last_block, 46147);
+        let start = cmp::max(self.db.last_block + 1, 46147);
         let mut log_time = time::Instant::now();
         let mut last_count = self.db.counter;
         let mut last_block = start;
