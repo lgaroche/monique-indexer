@@ -16,4 +16,5 @@ serde_json = "1.0.96"
 tokio = {version="1.28.1", features=["full"]}
 patricia-merkle-tree = { git = "https://github.com/lambdaclass/merkle_patricia_tree.git"}
 sha3 = "0.10.8"
+indexmap = "1.9.3"
 

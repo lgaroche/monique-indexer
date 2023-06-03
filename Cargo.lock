@@ -724,6 +724,7 @@ dependencies = [
  "bitvec 1.0.1",
  "ethers",
  "hex",
+ "indexmap",
  "patricia-merkle-tree",
  "rocksdb",
  "serde_json",

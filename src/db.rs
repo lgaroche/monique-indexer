@@ -1,11 +1,12 @@
-use std::collections::HashSet;
+use std::time;
 
 use ethers::types::Address;
+use indexmap::IndexSet;
 use rocksdb::{IteratorMode, WriteBatchWithTransaction, DB};
 
 pub struct AddressDB {
     db: DB,
-    known_set: HashSet<Address>,
+    index: IndexSet<Address>,
     pub counter: usize,
     pub last_block: u64,
 }
@@ -44,15 +45,39 @@ impl AddressDB {
                 0
             }
         };
+
         let mut this = Self {
             db,
             last_block,
-            known_set: HashSet::new(),
             counter: 0,
+            index: IndexSet::new(),
         };
 
-        this.known_set = this.iterator().map(|r| r.0).collect();
+        println!("reading database..."); // TODO: store address count in db
+        let start = time::Instant::now();
         this.counter = this.count();
+        println!(
+            "loaded {} addresses in {} ms",
+            this.counter,
+            start.elapsed().as_millis()
+        );
+
+        let mut index: IndexSet<Address> = IndexSet::with_capacity(this.counter);
+
+        {
+            println!("building index...");
+            let start = time::Instant::now();
+            let mut vec = vec![Address::from([0u8; 20]); this.counter];
+            for el in this.iterator() {
+                vec[el.1 as usize] = el.0;
+            }
+            for i in 0..this.counter {
+                index.insert(vec[i]);
+            }
+            println!("index built in {} ms", start.elapsed().as_millis());
+        }
+
+        this.index = index;
 
         Ok(this)
     }
@@ -72,10 +97,10 @@ impl AddressDB {
 
         let mut batch = WriteBatchWithTransaction::<false>::default();
         for address in addresses {
-            if address == Address::zero() || self.known_set.contains(&address) {
+            if address == Address::zero() || self.index.contains(&address) {
                 continue;
             }
-            self.known_set.insert(address);
+            self.index.insert(address);
             batch.put(address, self.counter.to_be_bytes());
             self.counter += 1;
         }
