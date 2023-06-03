@@ -3,10 +3,9 @@ use std::{cmp, time};
 use crate::db::AddressDB;
 use ethers::prelude::*;
 use hex;
-use keccak_hasher::KeccakHasher;
-use memory_db::{HashKey, MemoryDB};
-use reference_trie::ExtensionLayout;
-use trie_db::{TrieDBMutBuilder, TrieHash, TrieMut};
+
+use patricia_merkle_tree::PatriciaMerkleTree;
+use sha3::Keccak256;
 
 pub struct Indexer {
     db: AddressDB,
@@ -29,7 +28,7 @@ impl Indexer {
         println!("unique address count: {}", self.db.counter);
         if compute_root {
             let root = self.compute_merkle_root();
-            println!("merkle root: {}", root?);
+            println!("merkle root: {}", root);
         }
         Ok(())
     }
@@ -122,15 +121,17 @@ impl Indexer {
         Ok((elapsed, start.elapsed().as_micros()))
     }
 
-    pub fn compute_merkle_root(&self) -> Result<String, Box<dyn std::error::Error>> {
+    pub fn compute_merkle_root(&self) -> String {
         println!("computing merkle root for {} addresses", self.db.counter);
-        let mut memdb = MemoryDB::<KeccakHasher, HashKey<_>, _>::default();
-        let mut root = <TrieHash<ExtensionLayout>>::default();
-        let mut trie = TrieDBMutBuilder::<ExtensionLayout>::new(&mut memdb, &mut root).build();
+        let mut tree = PatriciaMerkleTree::<&[u8], &[u8], Keccak256>::new();
+        let mut v = Vec::with_capacity(self.db.counter as usize);
         for (address, index) in self.db.iterator() {
-            trie.insert(&address.as_bytes(), &index.to_be_bytes())?;
+            v.push((address.to_fixed_bytes(), index.to_be_bytes()));
         }
-        trie.commit();
-        Ok(hex::encode(trie.root()))
+        for i in 0..v.len() {
+            tree.insert(&v[i].0, &v[i].1);
+        }
+
+        hex::encode(tree.compute_hash())
     }
 }

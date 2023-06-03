@@ -8,13 +8,12 @@ lto = true          # Enable link-time optimization
 codegen-units = 1   # Reduce number of codegen units to increase optimizations
 
 [dependencies]
+bitvec = "1.0.1"
 ethers = "2.0.4"
 hex = "0.4.3"
-keccak-hasher = "0.16.0"
-memory-db = "0.32.0"
-reference-trie = "0.29.1"
 rocksdb = "0.21.0"
 serde_json = "1.0.96"
 tokio = {version="1.28.1", features=["full"]}
-trie-db = "0.27.1"
+patricia-merkle-tree = { git = "https://github.com/lambdaclass/merkle_patricia_tree.git"}
+sha3 = "0.10.8"
 

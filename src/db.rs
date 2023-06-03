@@ -62,6 +62,14 @@ impl AddressDB {
         block_number: u64,
         addresses: Vec<Address>,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        if block_number <= self.last_block {
+            return Err(format!(
+                "block {} is before the last indexed block {}",
+                block_number, self.last_block
+            )
+            .into());
+        }
+
         let mut batch = WriteBatchWithTransaction::<false>::default();
         for address in addresses {
             if address == Address::zero() || self.known_set.contains(&address) {
