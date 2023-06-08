@@ -53,23 +53,18 @@ impl AddressDB {
             index: IndexSet::new(),
         };
 
-        println!("reading database..."); // TODO: store address count in db
+        println!("building index...");
         let start = time::Instant::now();
-        this.counter = this.count();
-        println!(
-            "loaded {} addresses in {} ms",
-            this.counter,
-            start.elapsed().as_millis()
-        );
 
-        let mut index: IndexSet<Address> = IndexSet::with_capacity(this.counter);
+        let mut index: IndexSet<Address> = IndexSet::with_capacity(200_000_000);
 
         {
-            println!("building index...");
-            let start = time::Instant::now();
-            let mut vec = vec![Address::from([0u8; 20]); this.counter];
-            for el in this.iterator() {
-                vec[el.1 as usize] = el.0;
+            let mut vec = Vec::with_capacity(200_000_000);
+            for (address, index) in this.iterator() {
+                if index >= vec.len() as u64 {
+                    vec.resize(index as usize + 1, Address::from([0u8; 20]));
+                }
+                vec[index as usize] = address;
             }
             for i in 0..this.counter {
                 index.insert(vec[i]);
@@ -114,9 +109,5 @@ impl AddressDB {
         AddressDBIterator {
             inner: self.db.iterator(IteratorMode::Start),
         }
-    }
-
-    fn count(&self) -> usize {
-        self.iterator().count()
     }
 }

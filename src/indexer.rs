@@ -1,11 +1,19 @@
-use std::{cmp, time};
-
 use crate::db::AddressDB;
 use ethers::prelude::*;
-use hex;
-
+use hex_literal::hex;
 use patricia_merkle_tree::PatriciaMerkleTree;
 use sha3::Keccak256;
+use std::{cmp, time};
+
+const TRANSFER_LOG: [u8; 32] =
+    /* Transfer(address,address,uint256) */
+    hex!("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef");
+const TRANSFERSINGLE_LOG: [u8; 32] =
+    /* TransferSingle(address,address,address,uint256,uint256) */
+    hex!("c3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62");
+const TRANSFERBATCH_LOG: [u8; 32] =
+    /* TransferBatch(address,address,address,uint256[],uint256[]) */
+    hex!("4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb");
 
 pub struct Indexer {
     db: AddressDB,
@@ -102,6 +110,27 @@ impl Indexer {
                 } else if let Some(to) = tx.contract_address {
                     // ad the created contract address
                     list.push(to);
+                }
+                for log in tx.logs {
+                    if log.topics.len() > 2 {
+                        let signature = log.topics[0].to_fixed_bytes();
+                        let mut addrs = match signature {
+                            TRANSFER_LOG => vec![
+                                Address::from_slice(&log.topics[1].as_bytes()[12..]), // from
+                                Address::from_slice(&log.topics[2].as_bytes()[12..]), // to
+                            ],
+                            TRANSFERSINGLE_LOG | TRANSFERBATCH_LOG => vec![
+                                Address::from_slice(&log.topics[1].as_bytes()[12..]), // operator
+                                Address::from_slice(&log.topics[2].as_bytes()[12..]), // from
+                                Address::from_slice(&log.topics[3].as_bytes()[12..]), // to
+                            ],
+                            _ => vec![],
+                        };
+                        if addrs.len() > 2 {
+                            println!("1155 log: {:?}", tx.transaction_hash)
+                        }
+                        list.append(&mut addrs);
+                    }
                 }
             }
             elapsed
