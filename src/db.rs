@@ -94,11 +94,9 @@ impl AddressDB {
 
         let mut batch = WriteBatchWithTransaction::<false>::default();
         for address in addresses {
-            if address == Address::zero() || index.contains(&address) {
-                continue;
+            if index.insert(address) {
+                batch.put(address, index.len().to_be_bytes());
             }
-            index.insert(address);
-            batch.put(address, index.len().to_be_bytes());
         }
         batch.put("last_block".as_bytes(), block_number.to_be_bytes());
         self.db.write(batch)?;
