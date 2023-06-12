@@ -1,9 +1,12 @@
+mod api;
 mod db;
 mod indexer;
 
+use api::{count as api_count, index, resolve};
 use db::AddressDB;
 use ethers::prelude::*;
 use indexer::Indexer;
+use rocket::routes;
 use std::env;
 
 #[tokio::main]
@@ -19,9 +22,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match command.as_str() {
         "help" => Ok(print_help()),
         "run" => {
-            let mut provider = init()?;
-            println!("start indexing {} blocks", count);
-            provider.run(count).await
+            let mut indexer = init()?;
+            let db = indexer.db.index.clone();
+
+            tokio::spawn({
+                async move {
+                    indexer.db.build_index();
+                    indexer.run(count).await.unwrap();
+                }
+            });
+
+            rocket::build()
+                .manage(db)
+                .mount("/", routes![index, resolve, api_count])
+                .launch()
+                .await?;
+            Ok(())
         }
         "info" => init()?.print_info(false).await,
         "root" => init()?.print_info(true).await,

@@ -16,7 +16,7 @@ const TRANSFERBATCH_LOG: [u8; 32] =
     hex!("4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb");
 
 pub struct Indexer {
-    db: AddressDB,
+    pub db: AddressDB,
     provider: Provider<Http>,
 }
 
@@ -33,7 +33,10 @@ impl Indexer {
             self.db.last_block,
             (10_000 * self.db.last_block / last_block.as_u64()) as f64 / 100.0
         );
-        println!("unique address count: {}", self.db.counter);
+        println!(
+            "unique address count: {}",
+            self.db.index.lock().unwrap().len()
+        );
         if compute_root {
             let root = self.compute_merkle_root();
             println!("merkle root: {}", root);
@@ -44,7 +47,7 @@ impl Indexer {
     pub async fn run(&mut self, count: u64) -> Result<(), Box<dyn std::error::Error>> {
         let start = cmp::max(self.db.last_block + 1, 46147);
         let mut log_time = time::Instant::now();
-        let mut last_count = self.db.counter;
+        let mut last_count = self.db.index.lock().unwrap().len();
         let mut last_block = start;
         let mut times = Vec::with_capacity(count as usize);
 
@@ -62,16 +65,17 @@ impl Indexer {
 
                 // blocks per second
                 let speed = (block_number - last_block) as f64 / log_time.elapsed().as_secs_f64();
+                let counter = self.db.index.lock().unwrap().len();
                 println!(
                     "Block: {} [{} new addresses] [{} blk/s] [rpc: {} ms] [total: {} ms]",
                     block_number,
-                    self.db.counter - last_count,
+                    counter - last_count,
                     speed.round(),
                     rpc_time as u64 / 1000,
                     total_time as u64 / 1000
                 );
                 log_time = time::Instant::now();
-                last_count = self.db.counter;
+                last_count = counter;
                 last_block = block_number;
             }
         }
@@ -126,9 +130,6 @@ impl Indexer {
                             ],
                             _ => vec![],
                         };
-                        if addrs.len() > 2 {
-                            println!("1155 log: {:?}", tx.transaction_hash)
-                        }
                         list.append(&mut addrs);
                     }
                 }
@@ -151,16 +152,18 @@ impl Indexer {
     }
 
     pub fn compute_merkle_root(&self) -> String {
-        println!("computing merkle root for {} addresses", self.db.counter);
         let mut tree = PatriciaMerkleTree::<&[u8], &[u8], Keccak256>::new();
-        let mut v = Vec::with_capacity(self.db.counter as usize);
-        for (address, index) in self.db.iterator() {
-            v.push((address.to_fixed_bytes(), index.to_be_bytes()));
+        let size = self.db.index.lock().unwrap().len() as usize;
+        println!("computing merkle root for {} addresses", size);
+        let mut v = Vec::with_capacity(size);
+        {
+            for (address, index) in self.db.iterator() {
+                v.push((address.to_fixed_bytes(), index.to_be_bytes()));
+            }
         }
         for i in 0..v.len() {
             tree.insert(&v[i].0, &v[i].1);
         }
-
         hex::encode(tree.compute_hash())
     }
 }
