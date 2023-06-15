@@ -1,16 +1,19 @@
 mod api;
 mod db;
 mod indexer;
+mod words;
 
-use api::{count as api_count, index, resolve};
+use api::{alias, index, resolve, stats};
 use db::AddressDB;
 use ethers::prelude::*;
 use indexer::Indexer;
 use rocket::routes;
 use std::env;
 
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let command = env::args().nth(1).unwrap_or("help".to_string());
 
     const DEFAULT_COUNT: u64 = 5000u64;
@@ -27,14 +30,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             tokio::spawn({
                 async move {
-                    indexer.db.build_index();
-                    indexer.run(count).await.unwrap();
+                    indexer.db.build_index().expect("failed to build index");
+                    loop {
+                        if let Err(e) = indexer.run(count).await {
+                            println!("error: {}", e);
+                        }
+                    }
                 }
             });
 
             rocket::build()
                 .manage(db)
-                .mount("/", routes![index, resolve, api_count])
+                .mount("/", routes![index, resolve, stats, alias])
                 .launch()
                 .await?;
             Ok(())
@@ -45,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn init() -> Result<Indexer, Box<dyn std::error::Error>> {
+fn init() -> Result<Indexer> {
     let db = AddressDB::new("db")?;
     let provider_env = env::var("PROVIDER_RPC_URL");
     let provider_url = match provider_env {

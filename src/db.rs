@@ -7,9 +7,28 @@ use ethers::types::Address;
 use indexmap::IndexSet;
 use rocksdb::{IteratorMode, WriteBatchWithTransaction, DB};
 
+//type Result<T> = std::result::Result<T, Box<dyn std::error::Error + '_>>;
+
+#[derive(Clone)]
+pub struct SharedIndex(Arc<Mutex<IndexSet<Address>>>);
+
+impl SharedIndex {
+    pub fn lock(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, IndexSet<Address>>, Box<dyn std::error::Error>> {
+        match self.0.lock() {
+            Ok(this) => Ok(this),
+            Err(e) => Err(format!("could not acquire lock: {}", e.to_string()).into()),
+        }
+    }
+    pub fn len<'a>(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        Ok(self.lock()?.len())
+    }
+}
+
 pub struct AddressDB {
     db: DB,
-    pub index: Arc<Mutex<IndexSet<Address>>>,
+    pub index: SharedIndex,
     pub last_block: u64,
 }
 
@@ -51,12 +70,12 @@ impl AddressDB {
         let this = Self {
             db,
             last_block,
-            index: Arc::new(Mutex::new(IndexSet::new())),
+            index: SharedIndex(Arc::new(Mutex::new(IndexSet::new()))),
         };
         Ok(this)
     }
 
-    pub fn build_index(&mut self) {
+    pub fn build_index(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         println!("building index...");
         let start = time::Instant::now();
 
@@ -75,7 +94,8 @@ impl AddressDB {
             println!("index built in {} ms", start.elapsed().as_millis());
         }
 
-        *self.index.lock().unwrap() = index;
+        *self.index.lock()? = index;
+        Ok(())
     }
 
     pub fn append(
@@ -83,7 +103,6 @@ impl AddressDB {
         block_number: u64,
         addresses: Vec<Address>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut index = self.index.lock().unwrap();
         if block_number <= self.last_block {
             return Err(format!(
                 "block {} is before the last indexed block {}",
@@ -93,11 +112,15 @@ impl AddressDB {
         }
 
         let mut batch = WriteBatchWithTransaction::<false>::default();
-        for address in addresses {
-            if index.insert(address) {
-                batch.put(address, index.len().to_be_bytes());
+        {
+            let mut index = self.index.lock()?;
+            for address in addresses {
+                if index.insert(address) {
+                    batch.put(address, index.len().to_be_bytes());
+                }
             }
         }
+
         batch.put("last_block".as_bytes(), block_number.to_be_bytes());
         self.db.write(batch)?;
         self.last_block = block_number;

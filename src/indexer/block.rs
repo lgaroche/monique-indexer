@@ -23,7 +23,7 @@ pub(crate) async fn process(
     list.insert(block.author.unwrap());
 
     if block.transactions.len() > 0 {
-        let receipts = provider.get_block_receipts(block.number.unwrap()).await?;
+        let receipts = provider.get_block_receipts(number).await?;
 
         for tx in receipts {
             // add the tx sender
@@ -112,7 +112,7 @@ mod tests {
                 set.len(),
                 hex::encode(f)
             );
-            //assert_eq!(&f[..], hex::decode(expected).unwrap().as_slice());
+            assert_eq!(&f[..], hex::decode(expected).unwrap().as_slice());
         }
     }
 
@@ -121,7 +121,7 @@ mod tests {
         multi_test(vec![
             (
                 0,
-                "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a",
+                "f3683c9e3da9a7f90397767215345efe3be07565f14ab80d102f50644b98fbfa",
             ),
             (
                 123,
