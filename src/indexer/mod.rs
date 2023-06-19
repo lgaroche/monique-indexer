@@ -13,25 +13,38 @@ pub struct Indexer {
     provider: Provider<Http>,
 }
 
+#[derive(Debug)]
+pub struct Info {
+    pub last_node_block: u64,
+    pub last_db_block: u64,
+    pub unique_addresses: usize,
+    pub root: Option<String>,
+}
+
 impl Indexer {
     pub fn new(db: AddressDB, provider: Provider<Http>) -> Self {
         Self { db, provider }
     }
 
-    pub async fn print_info(&self, compute_root: bool) -> Result<()> {
-        let last_block = self.provider.get_block_number().await?;
-        println!("last block known by node: {}", last_block);
-        println!(
-            "last block in db: {} [{}%]",
-            self.db.last_block,
-            (10_000 * self.db.last_block / last_block.as_u64()) as f64 / 100.0
-        );
-        println!("unique address count: {}", self.db.index.len()?);
-        if compute_root {
+    pub async fn info(&self, compute_root: bool) -> Result<Info> {
+        let last_node_block = self.provider.get_block_number().await?;
+        let last_db_block = self.db.last_block;
+        let progress = (10_000 * last_db_block / last_node_block.as_u64()) as f64 / 100.0;
+        let addr_count = self.db.index.len()?;
+        println!("indexing stats: {last_db_block}/{last_node_block} [{progress}%] [{addr_count}]");
+        let root = if compute_root {
             let root = self.compute_merkle_root()?;
             println!("merkle root: {}", root);
-        }
-        Ok(())
+            Some(root)
+        } else {
+            None
+        };
+        Ok(Info {
+            last_node_block: last_node_block.as_u64(),
+            last_db_block,
+            unique_addresses: addr_count,
+            root,
+        })
     }
 
     pub async fn run(&mut self, count: u64) -> Result<()> {
@@ -63,7 +76,8 @@ impl Indexer {
                 times = time::Instant::now();
             }
         }
-        self.print_info(false).await
+        self.info(false).await?;
+        Ok(())
     }
 
     pub fn compute_merkle_root(&self) -> Result<String> {

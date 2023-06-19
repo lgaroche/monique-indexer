@@ -34,6 +34,8 @@ async fn main() -> Result<()> {
                     loop {
                         if let Err(e) = indexer.run(count).await {
                             println!("error: {}", e);
+                        } else {
+                            break;
                         }
                     }
                 }
@@ -46,8 +48,14 @@ async fn main() -> Result<()> {
                 .await?;
             Ok(())
         }
-        "info" => init()?.print_info(false).await,
-        "root" => init()?.print_info(true).await,
+        "info" => {
+            init()?.info(false).await?;
+            Ok(())
+        }
+        "root" => {
+            init()?.info(true).await?;
+            Ok(())
+        }
         _ => Ok(print_help()),
     }
 }
