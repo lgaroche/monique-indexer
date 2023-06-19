@@ -1,4 +1,5 @@
 use std::{
+    env,
     sync::{Arc, Mutex},
     time,
 };
@@ -59,11 +60,17 @@ impl AddressDB {
     pub fn new(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let db = DB::open_default(path)?;
 
+        // For debug purposes, overrides the genesis block number
+        let genesis_block = env::var("GENESIS_OVERRIDE")
+            .unwrap_or_default()
+            .parse::<u64>()
+            .unwrap_or_default();
+
         let last_block = match db.get("last_block".as_bytes())? {
             Some(block) => u64::from_be_bytes(block[0..8].try_into().unwrap()),
             None => {
-                db.put("last_block".as_bytes(), 0u64.to_be_bytes())?;
-                0
+                db.put("last_block".as_bytes(), genesis_block.to_be_bytes())?;
+                genesis_block
             }
         };
 
@@ -102,10 +109,10 @@ impl AddressDB {
         &mut self,
         block_number: u64,
         addresses: Vec<Address>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<usize, Box<dyn std::error::Error>> {
         if block_number != self.last_block + 1 {
             return Err(format!(
-                "unexpected block number {} (expected {})",
+                "unexpected block number {} (last block indexed was {})",
                 block_number, self.last_block
             )
             .into());
@@ -121,10 +128,11 @@ impl AddressDB {
             }
         }
 
+        let len = batch.len();
         batch.put("last_block".as_bytes(), block_number.to_be_bytes());
         self.db.write(batch)?;
         self.last_block = block_number;
-        Ok(())
+        Ok(len)
     }
 
     pub fn iterator(&self) -> AddressDBIterator {

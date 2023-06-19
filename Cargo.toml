@@ -9,7 +9,7 @@ codegen-units = 1   # Reduce number of codegen units to increase optimizations
 
 [dependencies]
 bitvec = "1.0.1"
-ethers = "2.0.4"
+ethers = {version="2.0.4", features=["ws", "rustls"]}
 hex = "0.4.3"
 rocksdb = "0.21.0"
 serde_json = "1.0.96"
