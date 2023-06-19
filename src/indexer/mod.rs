@@ -47,14 +47,20 @@ impl Indexer {
         })
     }
 
-    pub async fn run(&mut self, count: u64) -> Result<()> {
+    pub async fn run(&mut self) -> Result<()> {
         let start = self.db.last_block + 1;
         let mut log_time = time::Instant::now();
         let mut last_count = self.db.index.len()?;
         let mut last_block = start;
         let mut times = time::Instant::now();
 
-        for block_number in start..start + count {
+        let info = self.info(false).await?;
+        println!(
+            "there are {} blocks to catch up",
+            info.last_node_block - info.last_db_block
+        );
+
+        for block_number in (info.last_db_block + 1)..info.last_node_block {
             let set = block::process(&self.provider, block_number).await?;
             self.db.append(block_number, set)?;
             if log_time.elapsed().as_secs() > 3 {

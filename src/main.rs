@@ -16,12 +16,6 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 async fn main() -> Result<()> {
     let command = env::args().nth(1).unwrap_or("help".to_string());
 
-    const DEFAULT_COUNT: u64 = 5000u64;
-    let count = match env::args().nth(2) {
-        Some(count_arg) => count_arg.parse::<u64>().unwrap_or(DEFAULT_COUNT),
-        None => DEFAULT_COUNT,
-    };
-
     match command.as_str() {
         "help" => Ok(print_help()),
         "run" => {
@@ -32,7 +26,7 @@ async fn main() -> Result<()> {
                 async move {
                     indexer.db.build_index().expect("failed to build index");
                     loop {
-                        if let Err(e) = indexer.run(count).await {
+                        if let Err(e) = indexer.run().await {
                             println!("error: {}", e);
                         } else {
                             break;
