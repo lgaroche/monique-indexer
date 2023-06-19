@@ -103,9 +103,9 @@ impl AddressDB {
         block_number: u64,
         addresses: Vec<Address>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if block_number <= self.last_block {
+        if block_number != self.last_block + 1 {
             return Err(format!(
-                "block {} is before the last indexed block {}",
+                "unexpected block number {} (expected {})",
                 block_number, self.last_block
             )
             .into());

@@ -60,7 +60,7 @@ impl Indexer {
             info.last_node_block - info.last_db_block
         );
 
-        for block_number in (info.last_db_block + 1)..info.last_node_block {
+        for block_number in (info.last_db_block + 1)..(info.last_node_block + 1) {
             let set = block::process(&self.provider, block_number).await?;
             self.db.append(block_number, set)?;
             if log_time.elapsed().as_secs() > 3 {
