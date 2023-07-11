@@ -1,4 +1,6 @@
 use std::{
+    cmp,
+    collections::HashMap,
     env,
     sync::{Arc, Mutex},
     time,
@@ -30,7 +32,9 @@ impl SharedIndex {
 pub struct AddressDB {
     db: DB,
     pub index: SharedIndex,
-    pub last_block: u64,
+    pub last_indexed_block: u64,
+    pub last_committed_block: u64,
+    pending: HashMap<u64, Vec<Address>>,
 }
 
 pub struct AddressDBIterator<'a> {
@@ -76,8 +80,10 @@ impl AddressDB {
 
         let this = Self {
             db,
-            last_block,
+            last_indexed_block: last_block,
+            last_committed_block: last_block,
             index: SharedIndex(Arc::new(Mutex::new(IndexSet::new()))),
+            pending: HashMap::new(),
         };
         Ok(this)
     }
@@ -105,39 +111,97 @@ impl AddressDB {
         Ok(())
     }
 
-    pub fn append(
-        &mut self,
-        block_number: u64,
-        addresses: Vec<Address>,
-    ) -> Result<usize, Box<dyn std::error::Error>> {
-        if block_number != self.last_block + 1 {
-            return Err(format!(
-                "unexpected block number {} (last block indexed was {})",
-                block_number, self.last_block
-            )
-            .into());
-        }
-
-        let mut batch = WriteBatchWithTransaction::<false>::default();
-        {
-            let mut index = self.index.lock()?;
-            for address in addresses {
-                if index.insert(address) {
-                    batch.put(address, index.len().to_be_bytes());
-                }
-            }
-        }
-
-        let len = batch.len();
-        batch.put("last_block".as_bytes(), block_number.to_be_bytes());
-        self.db.write(batch)?;
-        self.last_block = block_number;
-        Ok(len)
-    }
-
     pub fn iterator(&self) -> AddressDBIterator {
         AddressDBIterator {
             inner: self.db.iterator(IteratorMode::Start),
         }
+    }
+
+    pub fn queue(
+        &mut self,
+        block_number: u64,
+        addresses: Vec<Address>,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        if block_number <= self.last_indexed_block {
+            println!(
+                "possible reorg detected: {} <= {} -- rolling back index",
+                block_number, self.last_indexed_block
+            );
+            self.rollback(block_number)?;
+        }
+        let mut addr = Vec::new();
+        let mut index = self.index.lock()?;
+        for address in addresses {
+            if index.insert(address) {
+                addr.push(address);
+            }
+        }
+        self.pending.insert(block_number, addr.clone());
+        self.last_indexed_block = block_number;
+        Ok(addr.len())
+    }
+
+    fn rollback(&mut self, block_number: u64) -> Result<(), Box<dyn std::error::Error>> {
+        for n in block_number..=self.last_indexed_block {
+            match self.pending.remove(&n) {
+                Some(a) => {
+                    println!("removing {} addresses from block {}", a.len(), n);
+                    let mut index = self.index.lock()?;
+                    let len = index.len();
+                    index.truncate(len - a.len());
+                }
+                None => {
+                    println!("no addresses to remove from block {}", n);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn commit(&mut self, safe_block: u64) -> Result<usize, Box<dyn std::error::Error>> {
+        let mut addr = Vec::new();
+        let target = cmp::min(safe_block, self.last_indexed_block);
+        for n in self.last_committed_block + 1..=target {
+            match self.pending.remove(&n) {
+                Some(mut a) => {
+                    addr.append(&mut a);
+                }
+                None => {
+                    println!("no addresses to commit for block {}", n);
+                    break;
+                }
+            }
+        }
+        let len = addr.len();
+        if len > 0 {
+            self.write(safe_block, addr)?;
+        }
+        self.last_committed_block = target;
+        Ok(len)
+    }
+
+    fn write(
+        &mut self,
+        block_number: u64,
+        addresses: Vec<Address>,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        if block_number <= self.last_committed_block {
+            return Err(format!(
+                "unexpected block number {} (last block indexed was {})",
+                block_number, self.last_committed_block
+            )
+            .into());
+        }
+        let index_len = self.index.lock()?.len().to_be_bytes();
+        let mut batch = WriteBatchWithTransaction::<false>::default();
+        {
+            for address in addresses {
+                batch.put(address, index_len);
+            }
+        }
+        batch.put("last_block".as_bytes(), block_number.to_be_bytes());
+        let len = batch.len() - 1;
+        self.db.write(batch)?;
+        Ok(len)
     }
 }

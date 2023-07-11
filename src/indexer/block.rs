@@ -56,6 +56,8 @@ pub(crate) async fn process(
                 }
             }
         }
+    } else {
+        println!("no transactions in block {}", number);
     }
 
     if let Some(withdrawals) = &block.withdrawals {
@@ -73,7 +75,7 @@ mod tests {
     use super::*;
     use ethers::providers::Provider;
     use sha3::{Digest, Sha3_256};
-    use std::{convert::TryFrom, env};
+    use std::env;
 
     async fn provider() -> Result<Provider<Ws>, Box<dyn std::error::Error>> {
         let provider_env = env::var("PROVIDER_RPC_URL");
