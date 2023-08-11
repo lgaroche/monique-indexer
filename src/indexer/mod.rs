@@ -2,9 +2,11 @@ use crate::db::AddressDB;
 use ethers::prelude::*;
 use patricia_merkle_tree::PatriciaMerkleTree;
 use sha3::Keccak256;
-use std::time;
+use std::{cmp, time};
 
 mod block;
+
+const LAST: u64 = 17680251;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -41,8 +43,8 @@ impl Indexer {
         let progress = (10_000 * last_db_block / last_node_block.as_u64()) as f64 / 100.0;
         let addr_count = self.db.index.len()?;
         println!(
-            "indexing stats: [head: {last_node_block}] [{progress}%] [safe: -{}] [index: {addr_count}]",
-            last_db_block - safe_block,
+            "indexing stats: [{last_db_block}/{last_node_block}] [{progress}%] [safe: {}] [index: {addr_count}]",
+            safe_block,
         );
         let root = if compute_root {
             let root = self.compute_merkle_root()?;
@@ -66,6 +68,9 @@ impl Indexer {
             if info.last_node_block == info.last_db_block {
                 break info.safe_block;
             }
+            if LAST <= info.last_db_block {
+                return Err("abort".into());
+            }
         };
         let provider = self.provider.to_owned();
         let mut stream = provider.subscribe_blocks().await?.boxed();
@@ -86,6 +91,9 @@ impl Indexer {
                 );
                 safe_block = info.safe_block;
             }
+            if block.number.unwrap().as_u64() == LAST {
+                return Err("abort".into());
+            }
         }
 
         println!("done");
@@ -105,18 +113,27 @@ impl Indexer {
             info.last_node_block - info.last_db_block
         );
 
-        for block_number in (info.last_db_block + 1)..=info.last_node_block {
+        let end = cmp::min(LAST, info.last_node_block);
+        for block_number in (info.last_db_block + 1)..=end {
             self.index_block(block_number).await?;
             if log_time.elapsed().as_secs() > 3 {
                 let processed = block_number - last_block;
+
+                info = self.info(false).await?;
+                let committed = if info.safe_block > self.db.last_committed_block {
+                    self.db.commit(info.safe_block)?
+                } else {
+                    0
+                };
 
                 // blocks per second
                 let speed = processed as f64 / log_time.elapsed().as_secs_f64();
                 let counter = self.db.index.len()?;
                 println!(
-                    "Block: {} [{} new addresses] [{} blk/s] [{} ms]",
+                    "Block: {} [{} new addresses] [committed {}] [{} blk/s] [{} ms]",
                     block_number,
                     counter - last_count,
+                    committed,
                     speed.round(),
                     (times.elapsed().as_millis() as u64) / processed,
                 );
@@ -124,13 +141,16 @@ impl Indexer {
                 last_count = counter;
                 last_block = block_number;
                 times = time::Instant::now();
-                info = self.info(false).await?;
-                if info.safe_block > self.db.last_committed_block {
-                    self.db.commit(info.safe_block)?;
-                }
             }
         }
-        Ok(self.info(false).await?)
+        info = self.info(false).await?;
+        let committed = if info.safe_block > self.db.last_committed_block {
+            self.db.commit(info.safe_block)?
+        } else {
+            0
+        };
+        println!("end of catch_up: committed {}", committed);
+        Ok(info)
     }
 
     pub fn compute_merkle_root(&self) -> Result<String> {

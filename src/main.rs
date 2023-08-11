@@ -28,7 +28,6 @@ async fn main() -> Result<()> {
                     loop {
                         if let Err(e) = indexer.run().await {
                             println!("error: {}", e);
-                        } else {
                             break;
                         }
                     }
@@ -43,11 +42,15 @@ async fn main() -> Result<()> {
             Ok(())
         }
         "info" => {
-            init().await?.info(false).await?;
+            let mut indexer = init().await?;
+            indexer.db.build_index()?;
+            indexer.info(false).await?;
             Ok(())
         }
         "root" => {
-            init().await?.info(true).await?;
+            let mut indexer = init().await?;
+            indexer.db.build_index()?;
+            indexer.info(true).await?;
             Ok(())
         }
         _ => Ok(print_help()),
