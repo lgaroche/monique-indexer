@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
     match command.as_str() {
         "help" => Ok(print_help()),
         "run" => {
-            let mut indexer = init()?;
+            let mut indexer = init().await?;
             let db = indexer.db.index.clone();
 
             tokio::spawn({
@@ -28,7 +28,6 @@ async fn main() -> Result<()> {
                     loop {
                         if let Err(e) = indexer.run().await {
                             println!("error: {}", e);
-                        } else {
                             break;
                         }
                     }
@@ -43,18 +42,22 @@ async fn main() -> Result<()> {
             Ok(())
         }
         "info" => {
-            init()?.info(false).await?;
+            let mut indexer = init().await?;
+            indexer.db.build_index()?;
+            indexer.info(false).await?;
             Ok(())
         }
         "root" => {
-            init()?.info(true).await?;
+            let mut indexer = init().await?;
+            indexer.db.build_index()?;
+            indexer.info(true).await?;
             Ok(())
         }
         _ => Ok(print_help()),
     }
 }
 
-fn init() -> Result<Indexer> {
+async fn init() -> Result<Indexer> {
     let db = AddressDB::new("db")?;
     let provider_env = env::var("PROVIDER_RPC_URL");
     let provider_url = match provider_env {
@@ -66,7 +69,7 @@ fn init() -> Result<Indexer> {
             "http://localhost:8545".to_string()
         }
     };
-    let provider = Provider::<Http>::try_from(provider_url)?;
+    let provider = Provider::<Ws>::connect(provider_url).await?;
     Ok(Indexer::new(db, provider))
 }
 

@@ -13,10 +13,10 @@ const TRANSFERBATCH_LOG: [u8; 32] =
     hex!("4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb");
 
 pub(crate) async fn process(
-    provider: &Provider<Http>,
-    number: u64,
+    provider: &Provider<Ws>,
+    block: &Block<TxHash>,
 ) -> Result<Vec<Address>, Box<dyn std::error::Error>> {
-    let block = provider.get_block(number).await?.expect("block not found");
+    let number = block.number.unwrap().as_u64();
 
     // add the block miner
     let mut list = IndexSet::with_capacity(500);
@@ -56,9 +56,11 @@ pub(crate) async fn process(
                 }
             }
         }
+    } else {
+        println!("no transactions in block {}", number);
     }
 
-    if let Some(withdrawals) = block.withdrawals {
+    if let Some(withdrawals) = &block.withdrawals {
         for withdrawal in withdrawals {
             // add the withdrawal recipient
             list.insert(withdrawal.address);
@@ -73,9 +75,9 @@ mod tests {
     use super::*;
     use ethers::providers::Provider;
     use sha3::{Digest, Sha3_256};
-    use std::{convert::TryFrom, env};
+    use std::env;
 
-    fn provider() -> Result<Provider<Http>, Box<dyn std::error::Error>> {
+    async fn provider() -> Result<Provider<Ws>, Box<dyn std::error::Error>> {
         let provider_env = env::var("PROVIDER_RPC_URL");
         let provider_url = match provider_env {
             Ok(provider_url) => provider_url,
@@ -86,21 +88,28 @@ mod tests {
                 "http://localhost:8545".to_string()
             }
         };
-        Ok(Provider::<Http>::try_from(provider_url)?)
+        Ok(Provider::<Ws>::connect(provider_url).await?)
     }
 
     #[tokio::test]
     async fn test_genesis() {
-        let provider = provider().unwrap();
-        let addresses = process(&provider, 0).await.unwrap();
+        let provider = provider().await.unwrap();
+        let genesis = BlockId::Number(BlockNumber::Number(0.into()));
+        let block = provider.get_block(genesis).await.unwrap().unwrap();
+        let addresses = process(&provider, &block).await.unwrap();
         assert_eq!(addresses.len(), 1);
         assert_eq!(addresses[0], Address::zero());
     }
 
     async fn multi_test(blocks: Vec<(u64, &str)>) {
-        let provider = provider().unwrap();
+        let provider = provider().await.unwrap();
         for (block, expected) in blocks {
-            let set = process(&provider, block).await.unwrap();
+            let block = provider
+                .get_block(BlockId::Number(block.into()))
+                .await
+                .unwrap()
+                .unwrap();
+            let set = process(&provider, &block).await.unwrap();
             let mut h = Sha3_256::new();
             for addr in &set {
                 h.update(addr.as_bytes());
@@ -108,7 +117,7 @@ mod tests {
             let f = h.finalize();
             println!(
                 "processed block {}: {} unique addresses, digest: {}",
-                block,
+                block.number.unwrap().as_u64(),
                 set.len(),
                 hex::encode(f)
             );
