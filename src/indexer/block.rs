@@ -57,7 +57,7 @@ pub(crate) async fn process(
             }
         }
     } else {
-        println!("no transactions in block {}", number);
+        //println!("no transactions in block {}", number);
     }
 
     if let Some(withdrawals) = &block.withdrawals {

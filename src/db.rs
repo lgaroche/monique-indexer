@@ -53,7 +53,7 @@ impl<'a> Iterator for AddressDBIterator<'a> {
                 }
                 Some((
                     Address::from_slice(&key),
-                    u64::from_be_bytes(value[0..8].try_into().unwrap()),
+                    u32::from_be_bytes(value[0..4].try_into().unwrap()) as u64,
                 ))
             }
             _ => None,
@@ -136,18 +136,11 @@ impl AddressDB {
         }
         let mut addr = Vec::new();
         let mut index = self.index.lock()?;
-        let address_len = addresses.len();
         for address in addresses {
             if index.insert(address) {
                 addr.push(address);
             }
         }
-        // println!(
-        //     "block={} added={} new={}",
-        //     block_number,
-        //     address_len,
-        //     addr.len()
-        // );
         self.pending.insert(block_number, addr.clone());
         self.last_indexed_block = block_number;
         Ok(addr.len())
@@ -208,8 +201,12 @@ impl AddressDB {
         let mut batch = WriteBatchWithTransaction::<false>::default();
         {
             for address in addresses {
-                //println!("{} : {}", address, cursor);
-                batch.put(address, cursor.to_be_bytes());
+                if cursor > u32::MAX as u64 {
+                    // Save a bit of disk space. Will stop working after 4B addresses.
+                    // TODO: use a variable length encoding or simply store 8 bytes.
+                    panic!("Address count exceeds u32::MAX");
+                }
+                batch.put(address, (cursor as u32).to_be_bytes());
                 cursor += 1;
             }
         }
