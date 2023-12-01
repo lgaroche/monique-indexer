@@ -1,8 +1,7 @@
-use crate::db::AddressDB;
 use ethers::prelude::*;
-use patricia_merkle_tree::PatriciaMerkleTree;
-use sha3::Keccak256;
 use std::{cmp, time};
+
+use crate::index::{Indexed, SharedIndex};
 
 mod block;
 
@@ -11,7 +10,7 @@ const LAST: u64 = 17680251;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 pub struct Indexer {
-    pub db: AddressDB,
+    pub db: SharedIndex<Address>,
     provider: Provider<Ws>,
 }
 
@@ -25,7 +24,7 @@ pub struct Info {
 }
 
 impl Indexer {
-    pub fn new(db: AddressDB, provider: Provider<Ws>) -> Self {
+    pub fn new(db: SharedIndex<Address>, provider: Provider<Ws>) -> Self {
         Self { db, provider }
     }
 
@@ -38,10 +37,13 @@ impl Indexer {
             .number
             .unwrap()
             .as_u64();
+
         let last_node_block = self.provider.get_block_number().await?;
-        let last_db_block = self.db.last_indexed_block;
+
+        let db = self.db.read()?;
+        let last_db_block = db.last_indexed_block;
         let progress = (10_000 * last_db_block / last_node_block.as_u64()) as f64 / 100.0;
-        let addr_count = self.db.index.len()?;
+        let addr_count = db.len();
         println!(
             "indexing stats: [{last_db_block}/{last_node_block}] [{progress}%] [safe: {}] [index: {addr_count}]",
             safe_block,
@@ -84,7 +86,7 @@ impl Indexer {
             );
             let info = self.info(false).await?;
             if info.safe_block > safe_block {
-                let len = self.db.commit(info.safe_block)?;
+                let len = self.db.lock()?.commit(info.safe_block)?;
                 println!(
                     "committed up to block {} [{} addresses]",
                     info.safe_block, len
@@ -101,9 +103,9 @@ impl Indexer {
     }
 
     pub async fn catch_up(&mut self) -> Result<Info> {
-        let start = self.db.last_indexed_block + 1;
+        let start = self.db.read()?.last_indexed_block + 1;
         let mut log_time = time::Instant::now();
-        let mut last_count = self.db.index.len()?;
+        let mut last_count = self.db.read()?.len();
         let mut last_block = start;
         let mut times = time::Instant::now();
 
@@ -120,15 +122,15 @@ impl Indexer {
                 let processed = block_number - last_block;
 
                 info = self.info(false).await?;
-                let committed = if info.safe_block > self.db.last_committed_block {
-                    self.db.commit(info.safe_block)?
+                let committed = if info.safe_block > self.db.read()?.last_committed_block {
+                    self.db.lock()?.commit(info.safe_block)?
                 } else {
                     0
                 };
 
                 // blocks per second
                 let speed = processed as f64 / log_time.elapsed().as_secs_f64();
-                let counter = self.db.index.len()?;
+                let counter = self.db.read()?.len();
                 println!(
                     "Block: {} [{} new addresses] [committed {}] [{} blk/s] [{} ms]",
                     block_number,
@@ -144,8 +146,8 @@ impl Indexer {
             }
         }
         info = self.info(false).await?;
-        let committed = if info.safe_block > self.db.last_committed_block {
-            self.db.commit(info.safe_block)?
+        let committed = if info.safe_block > self.db.read()?.last_committed_block {
+            self.db.lock()?.commit(info.safe_block)?
         } else {
             0
         };
@@ -154,25 +156,26 @@ impl Indexer {
     }
 
     pub fn compute_merkle_root(&self) -> Result<String> {
-        let mut tree = PatriciaMerkleTree::<&[u8], &[u8], Keccak256>::new();
-        let size = self.db.index.len()? as usize;
-        println!("computing merkle root for {} addresses", size);
-        let mut v = Vec::with_capacity(size);
-        {
-            for (address, index) in self.db.iterator() {
-                v.push((address.to_fixed_bytes(), index.to_be_bytes()));
-            }
-        }
-        for i in 0..v.len() {
-            tree.insert(&v[i].0, &v[i].1);
-        }
-        Ok(hex::encode(tree.compute_hash()))
+        panic!("not implemented")
+        // let mut tree = PatriciaMerkleTree::<&[u8], &[u8], Keccak256>::new();
+        // let size = self.db.len() as usize;
+        // println!("computing merkle root for {} addresses", size);
+        // let mut v = Vec::with_capacity(size);
+        // {
+        //     for (address, index) in self.db.iterator() {
+        //         v.push((address.to_fixed_bytes(), index.to_be_bytes()));
+        //     }
+        // }
+        // for i in 0..v.len() {
+        //     tree.insert(&v[i].0, &v[i].1);
+        // }
+        // Ok(hex::encode(tree.compute_hash()))
     }
 
     async fn index_block(&mut self, number: u64) -> Result<usize> {
         let id = BlockId::Number(number.into());
         let block = self.provider.get_block(id).await?.expect("block not found");
         let set = block::process(&self.provider, &block).await?;
-        Ok(self.db.queue(block.number.unwrap().as_u64(), set)?)
+        Ok(self.db.lock()?.queue(block.number.unwrap().as_u64(), set)?)
     }
 }

@@ -1,14 +1,16 @@
-use ethers::types::{Address, H160};
-use indexmap::IndexSet;
+use ethers::types::Address;
 use rocket::{
     get,
     response::Responder,
     serde::{json::Json, Serialize},
     State,
 };
-use std::{error::Error, str::FromStr, sync::PoisonError};
+use std::{error::Error, str::FromStr};
 
-use crate::{db::SharedIndex, words};
+use crate::{
+    index::{Indexed, SharedIndex},
+    words,
+};
 
 #[derive(Serialize)]
 #[serde(crate = "rocket::serde")]
@@ -34,19 +36,11 @@ pub enum ResolveError {
     BadAddress(String),
     #[response(status = 400)]
     WrongChecksum(String),
-    #[response(status = 500)]
-    InternalError(String),
 }
 
 impl From<Box<dyn Error>> for ResolveError {
     fn from(value: Box<dyn Error>) -> Self {
         Self::InvalidAlias(value.to_string())
-    }
-}
-
-impl From<PoisonError<std::sync::MutexGuard<'_, IndexSet<H160>>>> for ResolveError {
-    fn from(value: PoisonError<std::sync::MutexGuard<'_, IndexSet<H160>>>) -> Self {
-        Self::InternalError(value.to_string())
     }
 }
 
@@ -67,14 +61,13 @@ pub fn stats() -> Result<Json<Stats>, ResolveError> {
 }
 
 #[get("/resolve/<alias>")]
-pub fn resolve(alias: &str, set: &State<SharedIndex>) -> ApiResponse {
+pub fn resolve(alias: &str, set: &State<SharedIndex<Address>>) -> ApiResponse {
     let index = words::to_index(alias.to_string())?;
-    let set = set.lock()?;
-    let addr = set.get_index(index.0);
+    let addr = set.lock()?.get(index.0)?;
     if let Some(addr) = addr {
-        if words::checksum(*addr) == index.1 {
+        if words::checksum(addr) == index.1 {
             let res = AddressInfo {
-                address: *addr,
+                address: addr,
                 index: index.0,
                 monic: alias.to_string(),
             };
@@ -91,21 +84,20 @@ pub fn resolve(alias: &str, set: &State<SharedIndex>) -> ApiResponse {
 }
 
 #[get("/index/<index>")]
-pub fn index(index: usize, set: &State<SharedIndex>) -> ApiResponse {
-    let set = set.lock()?;
-    let res = set.get_index(index).map(|addr| AddressInfo {
-        address: *addr,
+pub fn index(index: usize, set: &State<SharedIndex<Address>>) -> ApiResponse {
+    let res = set.lock()?.get(index)?;
+    let info = res.map(|addr| AddressInfo {
+        address: addr,
         index,
-        monic: words::to_words(index as u64, words::checksum(*addr)),
+        monic: words::to_words(index as u64, words::checksum(addr)),
     });
-    Ok(res.map(Json))
+    Ok(info.map(Json))
 }
 
 #[get("/alias/<address>")]
-pub fn alias(address: String, set: &State<SharedIndex>) -> ApiResponse {
+pub fn alias(address: String, set: &State<SharedIndex<Address>>) -> ApiResponse {
     let addr = Address::from_str(address.as_str())?;
-    let set = set.lock()?;
-    let index = set.get_index_of(&addr);
+    let index = set.lock()?.index(addr)?;
     let res = index.map(|index| AddressInfo {
         address: addr,
         index,
