@@ -3,31 +3,39 @@ mod storage;
 
 use crate::index::storage::{Push, Storage};
 use crate::Result;
-use lru::LruCache;
-use std::num::NonZeroUsize;
+use indexmap::IndexSet;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{cmp, collections::HashMap};
 
 pub trait Indexed<T> {
-    type Key;
     fn len(&self) -> usize;
-    fn get(&mut self, index: usize) -> Result<Option<Self::Key>>;
-    fn index(&mut self, item: Self::Key) -> Result<Option<usize>>;
+    fn get(&mut self, index: usize) -> Result<Option<T>>;
+    fn index(&mut self, item: T) -> Result<Option<usize>>;
 }
 
 #[derive(Clone)]
-pub struct SharedIndex<T>(pub Arc<RwLock<IndexTable<T>>>);
+pub struct SharedIndex<const N: usize, T>(Arc<RwLock<IndexTable<N, T>>>);
 
-impl<T> SharedIndex<T> {
-    pub fn read<'a>(&self) -> Result<RwLockReadGuard<IndexTable<T>>> {
+impl<const N: usize, T> SharedIndex<N, T>
+where
+    T: AsRef<[u8]> + From<[u8; N]> + cmp::PartialEq + std::hash::Hash + Eq + Copy,
+    [u8; N]: From<T>,
+{
+    pub fn new(path: PathBuf, cache_size: usize) -> Self {
+        Self(Arc::new(RwLock::new(IndexTable::new(path, cache_size))))
+    }
+}
+
+impl<const N: usize, T> SharedIndex<N, T> {
+    pub fn read<'a>(&self) -> Result<RwLockReadGuard<IndexTable<N, T>>> {
         match self.0.read() {
             Ok(this) => Ok(this),
             Err(e) => Err(format!("could not acquire lock: {}", e.to_string()).into()),
         }
     }
 
-    pub fn lock(&self) -> Result<RwLockWriteGuard<IndexTable<T>>> {
+    pub fn lock(&self) -> Result<RwLockWriteGuard<IndexTable<N, T>>> {
         match self.0.write() {
             Ok(this) => Ok(this),
             Err(e) => Err(format!("could not acquire lock: {}", e.to_string()).into()),
@@ -35,27 +43,24 @@ impl<T> SharedIndex<T> {
     }
 }
 
-pub struct IndexTable<T> {
-    pub pending: HashMap<u64, Vec<T>>,
+pub struct IndexTable<const N: usize, T> {
     pub last_indexed_block: u64,
     pub last_committed_block: u64,
-    cache: LruCache<T, usize>,
-    storage: Storage<20, T>,
+    pending: HashMap<u64, Vec<T>>,
+    storage: Storage<N, T>,
 }
 
-impl<T> IndexTable<T>
+impl<const N: usize, T> IndexTable<N, T>
 where
-    T: AsRef<[u8]> + cmp::PartialEq + std::hash::Hash + Eq + Copy,
-    [u8; 20]: From<T>,
+    T: AsRef<[u8]> + From<[u8; N]> + cmp::PartialEq + std::hash::Hash + Eq + Copy,
+    [u8; N]: From<T>,
 {
     pub fn new(path: PathBuf, cache_size: usize) -> Self {
-        let storage = Storage::new(path);
-        let cache = LruCache::new(NonZeroUsize::new(cache_size).unwrap());
+        let storage = Storage::new(path, cache_size);
         Self {
             pending: HashMap::new(),
-            last_indexed_block: 0,
-            last_committed_block: 0,
-            cache,
+            last_indexed_block: storage.last_block,
+            last_committed_block: storage.last_block,
             storage,
         }
     }
@@ -69,34 +74,37 @@ where
             self.rollback(block_number)?;
         }
         let queue: Vec<&T> = self.pending.values().flatten().collect();
-        let mut new_queue: Vec<T> = Vec::new();
+        let mut new_queue = IndexSet::with_capacity(addresses.len());
         for address in addresses {
             if queue.contains(&&address) {
                 continue;
             }
-            if self.cache.contains(&address) {
+            if self.storage.index(address.into())?.is_some() {
                 continue;
             }
-            if new_queue.contains(&address) {
-                continue;
-            }
-            self.cache.put(address, block_number as usize);
-            new_queue.push(address);
+            new_queue.insert(address);
         }
         let len = new_queue.len();
-        self.pending.insert(block_number, new_queue);
+        self.pending
+            .insert(block_number, new_queue.into_iter().collect());
         self.last_indexed_block = block_number;
         Ok(len)
     }
 
     pub fn commit(&mut self, safe_block: u64) -> Result<usize> {
         let target = cmp::min(safe_block, self.last_indexed_block);
+        let mut committed = 0;
         for n in self.last_committed_block + 1..=target {
             if let Some(a) = self.pending.remove(&n) {
-                self.storage.push(a.iter().map(|p| (*p).into()).collect())?;
+                if a.len() == 0 {
+                    continue;
+                }
+                self.storage
+                    .push(a.iter().map(|p| (*p).into()).collect(), n)?;
+                committed += a.len();
             }
         }
-        Ok(0)
+        Ok(committed)
     }
 
     fn rollback(&mut self, block_number: u64) -> Result<()> {
@@ -114,53 +122,45 @@ where
     }
 }
 
-impl<T> Indexed<T> for IndexTable<T>
+impl<const N: usize, T> Indexed<T> for IndexTable<N, T>
 where
-    T: cmp::PartialEq + std::hash::Hash + Eq + Copy + std::convert::From<[u8; 20]>,
-    [u8; 20]: From<T>,
+    T: AsRef<[u8]> + cmp::PartialEq + std::hash::Hash + Eq + Copy + std::convert::From<[u8; N]>,
+    [u8; N]: From<T>,
 {
-    type Key = T;
-
     fn len(&self) -> usize {
-        self.storage.len() + self.pending.len()
+        self.storage.len() + self.pending.values().flatten().count()
     }
 
-    fn get(&mut self, index: usize) -> Result<Option<Self::Key>> {
-        if index > self.storage.len() {
+    fn get(&mut self, index: usize) -> Result<Option<T>> {
+        let item = if index > self.storage.len() {
             // if the index is in the pending queue
             let mut i = self.storage.len();
-            for n in self.last_committed_block + 1..=self.last_indexed_block {
-                if let Some(list) = self.pending.get(&n) {
-                    for address in list {
-                        if i == index {
-                            return Ok(Some(*address));
-                        }
-                        i += 1;
-                    }
+            for pending in self.pending.values().flatten() {
+                if i == index {
+                    Some(*pending);
                 }
+                i += 1;
             }
-            Ok(None)
+            None
         } else {
-            Ok(Some(self.storage.get(index).unwrap().unwrap().into()))
-        }
+            Some(self.storage.get(index)?.unwrap().into())
+        };
+        Ok(item)
     }
 
-    fn index(&mut self, item: Self::Key) -> Result<Option<usize>> {
-        let mut i = self.storage.len();
-        for n in self.last_committed_block + 1..=self.last_indexed_block {
-            if let Some(list) = self.pending.get(&n) {
-                for address in list {
-                    if *address == item {
-                        return Ok(Some(i));
-                    }
-                    i += 1;
-                }
+    fn index(&mut self, item: T) -> Result<Option<usize>> {
+        // Check the pending queue
+        let mut index = self.storage.len();
+        for pending in self.pending.values().flatten() {
+            if *pending == item {
+                return Ok(Some(index));
             }
+            index += 1;
         }
-
-        match self.cache.get(&item) {
-            Some(cached) => Ok(Some(*cached)),
-            None => self.storage.index(item.into()),
+        // Get from the storage
+        match self.storage.index(item.into())? {
+            Some(v) => Ok(Some(v)),
+            None => Ok(None),
         }
     }
 }

@@ -53,15 +53,15 @@ impl From<rustc_hex::FromHexError> for ResolveError {
 type ApiResponse = Result<Option<Json<AddressInfo>>, ResolveError>;
 
 #[get("/")]
-pub fn stats() -> Result<Json<Stats>, ResolveError> {
+pub fn stats(set: &State<SharedIndex<20, Address>>) -> Result<Json<Stats>, ResolveError> {
     Ok(Json(Stats {
-        last_block: 0,
-        unique_addresses: 0,
+        last_block: set.read()?.last_indexed_block,
+        unique_addresses: set.read()?.len(),
     }))
 }
 
 #[get("/resolve/<alias>")]
-pub fn resolve(alias: &str, set: &State<SharedIndex<Address>>) -> ApiResponse {
+pub fn resolve(alias: &str, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
     let index = words::to_index(alias.to_string())?;
     let addr = set.lock()?.get(index.0)?;
     if let Some(addr) = addr {
@@ -84,7 +84,7 @@ pub fn resolve(alias: &str, set: &State<SharedIndex<Address>>) -> ApiResponse {
 }
 
 #[get("/index/<index>")]
-pub fn index(index: usize, set: &State<SharedIndex<Address>>) -> ApiResponse {
+pub fn index(index: usize, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
     let res = set.lock()?.get(index)?;
     let info = res.map(|addr| AddressInfo {
         address: addr,
@@ -95,7 +95,7 @@ pub fn index(index: usize, set: &State<SharedIndex<Address>>) -> ApiResponse {
 }
 
 #[get("/alias/<address>")]
-pub fn alias(address: String, set: &State<SharedIndex<Address>>) -> ApiResponse {
+pub fn alias(address: String, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
     let addr = Address::from_str(address.as_str())?;
     let index = set.lock()?.index(addr)?;
     let res = index.map(|index| AddressInfo {

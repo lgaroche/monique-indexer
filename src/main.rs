@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
 }
 
 async fn init() -> Result<Indexer> {
-    let db = IndexTable::new("db".into(), 1_000_000);
+    let db = SharedIndex::new("db".into(), 1_000_000);
     let provider_env = env::var("PROVIDER_RPC_URL");
     let provider_url = match provider_env {
         Ok(provider_url) => provider_url,
@@ -76,10 +76,7 @@ async fn init() -> Result<Indexer> {
         }
     };
     let provider = Provider::<Ws>::connect(provider_url).await?;
-    Ok(Indexer::new(
-        SharedIndex::<Address>(Arc::new(RwLock::new(db))),
-        provider,
-    ))
+    Ok(Indexer::new(db, provider))
 }
 
 fn print_help() {

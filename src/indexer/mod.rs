@@ -10,7 +10,7 @@ const LAST: u64 = 17680251;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 pub struct Indexer {
-    pub db: SharedIndex<Address>,
+    pub db: SharedIndex<20, Address>,
     provider: Provider<Ws>,
 }
 
@@ -24,7 +24,7 @@ pub struct Info {
 }
 
 impl Indexer {
-    pub fn new(db: SharedIndex<Address>, provider: Provider<Ws>) -> Self {
+    pub fn new(db: SharedIndex<20, Address>, provider: Provider<Ws>) -> Self {
         Self { db, provider }
     }
 
