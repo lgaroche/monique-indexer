@@ -1,5 +1,7 @@
 mod flat_storage;
 mod storage;
+#[cfg(test)]
+mod tests;
 
 use crate::index::storage::{Push, Storage};
 use crate::Result;

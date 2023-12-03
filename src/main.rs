@@ -6,8 +6,8 @@ mod words;
 use ethers::prelude::*;
 use index::SharedIndex;
 use indexer::Indexer;
-use rocket::routes;
-use std::{clone::Clone, env};
+use rocket::{routes, Config};
+use std::{clone::Clone, env, net::Ipv4Addr};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -33,7 +33,13 @@ async fn main() -> Result<()> {
                 }
             });
 
-            rocket::build()
+            let config = Config {
+                port: 8000,
+                address: Ipv4Addr::new(0, 0, 0, 0).into(),
+                ..Default::default()
+            };
+
+            rocket::custom(config)
                 .manage(db)
                 .mount(
                     "/",
