@@ -4,14 +4,10 @@ mod indexer;
 mod words;
 
 use ethers::prelude::*;
-use index::{IndexTable, SharedIndex};
+use index::SharedIndex;
 use indexer::Indexer;
 use rocket::routes;
-use std::{
-    clone::Clone,
-    env,
-    sync::{Arc, RwLock},
-};
+use std::{clone::Clone, env};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -64,7 +60,7 @@ async fn main() -> Result<()> {
 }
 
 async fn init() -> Result<Indexer> {
-    let db = SharedIndex::new("db".into(), 1_000_000);
+    let db = SharedIndex::<20, Address>::new("db".into(), 1_000_000);
     let provider_env = env::var("PROVIDER_RPC_URL");
     let provider_url = match provider_env {
         Ok(provider_url) => provider_url,

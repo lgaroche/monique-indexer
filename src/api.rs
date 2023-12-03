@@ -85,7 +85,7 @@ pub fn resolve(alias: &str, set: &State<SharedIndex<20, Address>>) -> ApiRespons
 
 #[get("/index/<index>")]
 pub fn index(index: usize, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
-    let res = set.lock()?.get(index)?;
+    let res = set.read()?.get(index)?;
     let info = res.map(|addr| AddressInfo {
         address: addr,
         index,
@@ -97,7 +97,7 @@ pub fn index(index: usize, set: &State<SharedIndex<20, Address>>) -> ApiResponse
 #[get("/alias/<address>")]
 pub fn alias(address: String, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
     let addr = Address::from_str(address.as_str())?;
-    let index = set.lock()?.index(addr)?;
+    let index = set.read()?.index(addr)?;
     let res = index.map(|index| AddressInfo {
         address: addr,
         index,

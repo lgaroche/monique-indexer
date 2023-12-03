@@ -1,4 +1,10 @@
-use std::{cmp, hash::Hash, num::NonZeroUsize, path::PathBuf};
+use std::{
+    cmp,
+    hash::Hash,
+    num::NonZeroUsize,
+    path::PathBuf,
+    sync::{RwLock, RwLockWriteGuard},
+};
 
 use libmdbx::{
     Database, DatabaseOptions, Mode, NoWriteMap, PageSize, ReadWriteOptions, TableFlags, WriteFlags,
@@ -15,10 +21,10 @@ use super::{
 pub struct Storage<const N: usize, T> {
     _data: std::marker::PhantomData<T>,
     db: Database<NoWriteMap>,
-    table: Flat<T, N>,
+    table: RwLock<Flat<T, N>>,
     counter: u32,
     pub last_block: u64,
-    cache: LruCache<T, usize>,
+    cache: RwLock<LruCache<T, usize>>,
 }
 
 pub trait Push<T> {
@@ -58,8 +64,11 @@ where
         };
         println!("counter: {}", counter);
         println!("last_block: {}", last_block);
-        let table = Flat::new(path.join("flat.db"), NonZeroUsize::new(50_000).unwrap());
-        let cache = LruCache::new(NonZeroUsize::new(cache_size).unwrap());
+        let table = RwLock::new(Flat::new(
+            path.join("flat.db"),
+            NonZeroUsize::new(50_000).unwrap(),
+        ));
+        let cache = RwLock::new(LruCache::new(NonZeroUsize::new(cache_size).unwrap()));
         Self {
             _data: std::marker::PhantomData,
             db,
@@ -69,11 +78,25 @@ where
             cache,
         }
     }
+
+    fn get_cache(&self) -> Result<RwLockWriteGuard<LruCache<T, usize>>> {
+        match self.cache.write() {
+            Ok(this) => Ok(this),
+            Err(e) => Err(format!("could not acquire lock: {}", e.to_string()).into()),
+        }
+    }
+
+    fn get_table(&self) -> Result<RwLockWriteGuard<Flat<T, N>>> {
+        match self.table.write() {
+            Ok(this) => Ok(this),
+            Err(e) => Err(format!("could not acquire lock: {}", e.to_string()).into()),
+        }
+    }
 }
 
 impl<const N: usize, T> Push<T> for Storage<N, T>
 where
-    T: AsRef<[u8]> + From<[u8; N]> + cmp::PartialEq + std::hash::Hash + Eq + Clone,
+    T: AsRef<[u8]> + From<[u8; N]> + cmp::PartialEq + std::hash::Hash + Eq + Clone + Copy,
     [u8; N]: From<T>,
 {
     fn push(&mut self, items: Vec<T>, last_block: u64) -> Result<()> {
@@ -94,10 +117,10 @@ where
                     return Err(e.into());
                 }
             }
-            self.cache.put(i, self.counter as usize);
+            self.get_cache()?.put(i, self.counter as usize);
         }
 
-        self.table.append(inserted)?;
+        self.get_table()?.append(inserted)?;
 
         let stats_table = tx.create_table(Some("stats"), TableFlags::CREATE)?;
         tx.put(
@@ -128,20 +151,25 @@ where
         self.counter as usize
     }
 
-    fn get(&mut self, index: usize) -> Result<Option<T>> {
-        let item = self.table.get(index as usize)?;
+    fn get(&self, index: usize) -> Result<Option<T>> {
+        let item = self.get_table()?.get(index as usize)?;
         Ok(Some(item))
     }
 
-    fn index(&mut self, item: T) -> Result<Option<usize>> {
-        if let Some(index) = self.cache.get(&item.into()) {
+    fn index(&self, item: T) -> Result<Option<usize>> {
+        if let Some(index) = self.get_cache()?.get(&item.into()) {
             return Ok(Some(*index));
         }
         let tx = self.db.begin_ro_txn()?;
         if let Ok(table) = tx.open_table(Some("table")) {
-            let item = <T as Into<[u8; N]>>::into(item);
-            let counter = tx.get(&table, &item[..])?;
-            Ok(counter.map(|c| u32::from_be_bytes(c) as usize))
+            let slice = <T as Into<[u8; N]>>::into(item);
+            if let Some(counter_be) = tx.get(&table, &slice)? {
+                let counter = u32::from_be_bytes(counter_be) as usize;
+                self.get_cache()?.put(item, counter);
+                Ok(Some(counter))
+            } else {
+                Ok(None)
+            }
         } else {
             Ok(None)
         }

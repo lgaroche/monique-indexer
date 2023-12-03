@@ -10,8 +10,8 @@ use std::{cmp, collections::HashMap};
 
 pub trait Indexed<T> {
     fn len(&self) -> usize;
-    fn get(&mut self, index: usize) -> Result<Option<T>>;
-    fn index(&mut self, item: T) -> Result<Option<usize>>;
+    fn get(&self, index: usize) -> Result<Option<T>>;
+    fn index(&self, item: T) -> Result<Option<usize>>;
 }
 
 #[derive(Clone)]
@@ -131,7 +131,7 @@ where
         self.storage.len() + self.pending.values().flatten().count()
     }
 
-    fn get(&mut self, index: usize) -> Result<Option<T>> {
+    fn get(&self, index: usize) -> Result<Option<T>> {
         let item = if index > self.storage.len() {
             // if the index is in the pending queue
             let mut i = self.storage.len();
@@ -148,7 +148,7 @@ where
         Ok(item)
     }
 
-    fn index(&mut self, item: T) -> Result<Option<usize>> {
+    fn index(&self, item: T) -> Result<Option<usize>> {
         // Check the pending queue
         let mut index = self.storage.len();
         for pending in self.pending.values().flatten() {
