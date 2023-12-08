@@ -12,7 +12,7 @@ use crate::{
     words,
 };
 
-const PIVOT: usize = 262_144;
+const PIVOT: usize = 0x40000;
 
 #[derive(Serialize)]
 #[serde(crate = "rocket::serde")]
@@ -74,7 +74,7 @@ pub fn resolve(alias: &str, set: &State<SharedIndex<20, Address>>) -> ApiRespons
         if words::checksum(addr) == checksum {
             let res = AddressInfo {
                 address: addr,
-                index: stored_index,
+                index,
                 monic: alias.to_string(),
             };
             Ok(Some(Json(res)))
@@ -94,7 +94,7 @@ pub fn index(index: usize, set: &State<SharedIndex<20, Address>>) -> ApiResponse
     if index < PIVOT {
         return Ok(None);
     }
-    let res = set.read()?.get(index - PIVOT - 1)?;
+    let res = set.read()?.get(index - PIVOT)?;
     let info = res.map(|addr| AddressInfo {
         address: addr,
         index,
@@ -109,7 +109,7 @@ pub fn alias(address: String, set: &State<SharedIndex<20, Address>>) -> ApiRespo
     let index = set.read()?.index(addr)?;
     let res = index.map(|index| AddressInfo {
         address: addr,
-        index,
+        index: index + PIVOT,
         monic: words::to_words((index + PIVOT) as u64, words::checksum(addr)),
     });
     Ok(res.map(Json))
