@@ -12,6 +12,8 @@ use crate::{
     words,
 };
 
+const PIVOT: usize = 262_144;
+
 #[derive(Serialize)]
 #[serde(crate = "rocket::serde")]
 pub struct AddressInfo {
@@ -62,20 +64,24 @@ pub fn stats(set: &State<SharedIndex<20, Address>>) -> Result<Json<Stats>, Resol
 
 #[get("/resolve/<alias>")]
 pub fn resolve(alias: &str, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
-    let index = words::to_index(alias.to_string())?;
-    let addr = set.lock()?.get(index.0)?;
+    let (index, checksum) = words::to_index(alias.to_string())?;
+    if index < PIVOT {
+        return Ok(None); // TODO: get mutable monics from the contract
+    }
+    let stored_index = index - PIVOT;
+    let addr = set.lock()?.get(stored_index)?;
     if let Some(addr) = addr {
-        if words::checksum(addr) == index.1 {
+        if words::checksum(addr) == checksum {
             let res = AddressInfo {
                 address: addr,
-                index: index.0,
+                index,
                 monic: alias.to_string(),
             };
             Ok(Some(Json(res)))
         } else {
             Err(ResolveError::WrongChecksum(format!(
                 "wrong checksum {}",
-                index.1
+                checksum
             )))
         }
     } else {
@@ -85,7 +91,10 @@ pub fn resolve(alias: &str, set: &State<SharedIndex<20, Address>>) -> ApiRespons
 
 #[get("/index/<index>")]
 pub fn index(index: usize, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
-    let res = set.read()?.get(index)?;
+    if index < PIVOT {
+        return Ok(None);
+    }
+    let res = set.read()?.get(index - PIVOT - 1)?;
     let info = res.map(|addr| AddressInfo {
         address: addr,
         index,
@@ -101,7 +110,7 @@ pub fn alias(address: String, set: &State<SharedIndex<20, Address>>) -> ApiRespo
     let res = index.map(|index| AddressInfo {
         address: addr,
         index,
-        monic: words::to_words(index as u64, words::checksum(addr)),
+        monic: words::to_words((index + PIVOT) as u64, words::checksum(addr)),
     });
     Ok(res.map(Json))
 }
