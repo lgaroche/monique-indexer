@@ -74,7 +74,7 @@ pub fn resolve(alias: &str, set: &State<SharedIndex<20, Address>>) -> ApiRespons
         if words::checksum(addr) == checksum {
             let res = AddressInfo {
                 address: addr,
-                index,
+                index: stored_index,
                 monic: alias.to_string(),
             };
             Ok(Some(Json(res)))
