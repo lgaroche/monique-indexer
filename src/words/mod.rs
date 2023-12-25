@@ -35,13 +35,11 @@ pub fn to_words(index: u64, checksum: u8) -> String {
         .rchunks(11)
         .map(|c| c.load::<u16>())
         .collect::<Vec<u16>>();
-    let pos = chunks.len()
-        - 1
-        - chunks
-            .iter()
-            .rev()
-            .position(|chunk| chunk > &0)
-            .unwrap_or(0);
+    let pos = if index > 0 {
+        (index.ilog2() as f32 / 11.0).floor() as usize
+    } else {
+        0
+    };
     let last = if chunks[pos] > 127 { pos + 1 } else { pos };
     chunks[last] = chunks[last] | (checksum as u16) << 7;
     let mut words = Vec::new();
@@ -79,6 +77,10 @@ mod tests {
 
     #[test]
     fn test_max() {
+        let address = Address::from_slice(&[0xff; 20]);
+        let words = to_words(0, checksum(address));
+        assert_eq!(words, "source");
+
         let address = Address::from_slice(&[0xff; 20]);
         let words = to_words(4611686018427387903, checksum(address));
         assert_eq!(words, "that zoo zoo zoo zoo zoo");

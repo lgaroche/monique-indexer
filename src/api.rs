@@ -1,14 +1,18 @@
-use ethers::types::{Address, H160};
-use indexmap::IndexSet;
+use ethers::types::Address;
 use rocket::{
     get,
     response::Responder,
     serde::{json::Json, Serialize},
     State,
 };
-use std::{error::Error, str::FromStr, sync::PoisonError};
+use std::{error::Error, str::FromStr};
 
-use crate::{db::SharedIndex, words};
+use crate::{
+    index::{Indexed, SharedIndex},
+    words,
+};
+
+const PIVOT: usize = 0x40000;
 
 #[derive(Serialize)]
 #[serde(crate = "rocket::serde")]
@@ -34,19 +38,11 @@ pub enum ResolveError {
     BadAddress(String),
     #[response(status = 400)]
     WrongChecksum(String),
-    #[response(status = 500)]
-    InternalError(String),
 }
 
 impl From<Box<dyn Error>> for ResolveError {
     fn from(value: Box<dyn Error>) -> Self {
         Self::InvalidAlias(value.to_string())
-    }
-}
-
-impl From<PoisonError<std::sync::MutexGuard<'_, IndexSet<H160>>>> for ResolveError {
-    fn from(value: PoisonError<std::sync::MutexGuard<'_, IndexSet<H160>>>) -> Self {
-        Self::InternalError(value.to_string())
     }
 }
 
@@ -59,30 +55,33 @@ impl From<rustc_hex::FromHexError> for ResolveError {
 type ApiResponse = Result<Option<Json<AddressInfo>>, ResolveError>;
 
 #[get("/")]
-pub fn stats() -> Result<Json<Stats>, ResolveError> {
+pub fn stats(set: &State<SharedIndex<20, Address>>) -> Result<Json<Stats>, ResolveError> {
     Ok(Json(Stats {
-        last_block: 0,
-        unique_addresses: 0,
+        last_block: set.read()?.last_indexed_block,
+        unique_addresses: set.read()?.len(),
     }))
 }
 
 #[get("/resolve/<alias>")]
-pub fn resolve(alias: &str, set: &State<SharedIndex>) -> ApiResponse {
-    let index = words::to_index(alias.to_string())?;
-    let set = set.lock()?;
-    let addr = set.get_index(index.0);
+pub fn resolve(alias: &str, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
+    let (index, checksum) = words::to_index(alias.to_string())?;
+    if index < PIVOT {
+        return Ok(None); // TODO: get mutable monics from the contract
+    }
+    let stored_index = index - PIVOT;
+    let addr = set.lock()?.get(stored_index)?;
     if let Some(addr) = addr {
-        if words::checksum(*addr) == index.1 {
+        if words::checksum(addr) == checksum {
             let res = AddressInfo {
-                address: *addr,
-                index: index.0,
+                address: addr,
+                index,
                 monic: alias.to_string(),
             };
             Ok(Some(Json(res)))
         } else {
             Err(ResolveError::WrongChecksum(format!(
                 "wrong checksum {}",
-                index.1
+                checksum
             )))
         }
     } else {
@@ -91,25 +90,27 @@ pub fn resolve(alias: &str, set: &State<SharedIndex>) -> ApiResponse {
 }
 
 #[get("/index/<index>")]
-pub fn index(index: usize, set: &State<SharedIndex>) -> ApiResponse {
-    let set = set.lock()?;
-    let res = set.get_index(index).map(|addr| AddressInfo {
-        address: *addr,
-        index,
-        monic: words::to_words(index as u64, words::checksum(*addr)),
-    });
-    Ok(res.map(Json))
-}
-
-#[get("/alias/<address>")]
-pub fn alias(address: String, set: &State<SharedIndex>) -> ApiResponse {
-    let addr = Address::from_str(address.as_str())?;
-    let set = set.lock()?;
-    let index = set.get_index_of(&addr);
-    let res = index.map(|index| AddressInfo {
+pub fn index(index: usize, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
+    if index < PIVOT {
+        return Ok(None);
+    }
+    let res = set.read()?.get(index - PIVOT)?;
+    let info = res.map(|addr| AddressInfo {
         address: addr,
         index,
         monic: words::to_words(index as u64, words::checksum(addr)),
+    });
+    Ok(info.map(Json))
+}
+
+#[get("/alias/<address>")]
+pub fn alias(address: String, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
+    let addr = Address::from_str(address.as_str())?;
+    let index = set.read()?.index(addr)?;
+    let res = index.map(|index| AddressInfo {
+        address: addr,
+        index: index + PIVOT,
+        monic: words::to_words((index + PIVOT) as u64, words::checksum(addr)),
     });
     Ok(res.map(Json))
 }

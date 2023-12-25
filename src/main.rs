@@ -1,16 +1,15 @@
 mod api;
-mod db;
+mod index;
 mod indexer;
 mod words;
 
-use api::{alias, index, resolve, stats};
-use db::AddressDB;
 use ethers::prelude::*;
+use index::SharedIndex;
 use indexer::Indexer;
-use rocket::routes;
-use std::env;
+use rocket::{routes, Config};
+use std::{clone::Clone, env, net::Ipv4Addr};
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -20,11 +19,11 @@ async fn main() -> Result<()> {
         "help" => Ok(print_help()),
         "run" => {
             let mut indexer = init().await?;
-            let db = indexer.db.index.clone();
+            let db = indexer.db.clone();
 
             tokio::spawn({
                 async move {
-                    indexer.db.build_index().expect("failed to build index");
+                    //indexer.db.build_index().expect("failed to build index");
                     loop {
                         if let Err(e) = indexer.run().await {
                             println!("error: {}", e);
@@ -34,22 +33,31 @@ async fn main() -> Result<()> {
                 }
             });
 
-            rocket::build()
+            let config = Config {
+                port: 8000,
+                address: Ipv4Addr::new(0, 0, 0, 0).into(),
+                ..Default::default()
+            };
+
+            rocket::custom(config)
                 .manage(db)
-                .mount("/", routes![index, resolve, stats, alias])
+                .mount(
+                    "/",
+                    routes![api::index, api::resolve, api::stats, api::alias],
+                )
                 .launch()
                 .await?;
             Ok(())
         }
         "info" => {
-            let mut indexer = init().await?;
-            indexer.db.build_index()?;
+            let indexer = init().await?;
+            //indexer.db.build_index()?;
             indexer.info(false).await?;
             Ok(())
         }
         "root" => {
-            let mut indexer = init().await?;
-            indexer.db.build_index()?;
+            let indexer = init().await?;
+            //indexer.db.build_index()?;
             indexer.info(true).await?;
             Ok(())
         }
@@ -58,7 +66,7 @@ async fn main() -> Result<()> {
 }
 
 async fn init() -> Result<Indexer> {
-    let db = AddressDB::new("db")?;
+    let db = SharedIndex::<20, Address>::new("db".into(), 1_000_000);
     let provider_env = env::var("PROVIDER_RPC_URL");
     let provider_url = match provider_env {
         Ok(provider_url) => provider_url,
