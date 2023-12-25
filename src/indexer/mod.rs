@@ -1,11 +1,9 @@
 use ethers::prelude::*;
-use std::{cmp, time};
+use std::time;
 
 use crate::index::{Indexed, SharedIndex};
 
 mod block;
-
-const LAST: u64 = 17680251;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -70,9 +68,6 @@ impl Indexer {
             if info.last_node_block == info.last_db_block {
                 break info.safe_block;
             }
-            if LAST <= info.last_db_block {
-                return Err("abort".into());
-            }
         };
         let provider = self.provider.to_owned();
         let mut stream = provider.subscribe_blocks().await?.boxed();
@@ -93,9 +88,6 @@ impl Indexer {
                 );
                 safe_block = info.safe_block;
             }
-            if block.number.unwrap().as_u64() == LAST {
-                return Err("abort".into());
-            }
         }
 
         println!("done");
@@ -115,8 +107,7 @@ impl Indexer {
             info.last_node_block - info.last_db_block
         );
 
-        let end = cmp::min(LAST, info.last_node_block);
-        for block_number in (info.last_db_block + 1)..=end {
+        for block_number in (info.last_db_block + 1)..=info.last_node_block {
             self.index_block(block_number).await?;
             if log_time.elapsed().as_secs() > 3 {
                 let processed = block_number - last_block;
