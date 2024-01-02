@@ -95,18 +95,18 @@ where
 
     pub fn commit(&mut self, safe_block: u64) -> Result<usize> {
         let target = cmp::min(safe_block, self.last_indexed_block);
-        let mut committed = 0;
+        let mut pending = vec![];
         for n in self.last_committed_block + 1..=target {
-            if let Some(a) = self.pending.remove(&n) {
-                if a.len() == 0 {
-                    continue;
-                }
-                self.storage
-                    .push(a.iter().map(|p| (*p).into()).collect(), n)?;
-                committed += a.len();
+            if let Some(mut a) = self.pending.remove(&n) {
+                pending.append(&mut a);
             }
         }
-        Ok(committed)
+        let len = pending.len();
+        if len > 0 {
+            self.storage.push(pending, target)?;
+            self.last_committed_block = target;
+        }
+        Ok(len)
     }
 
     fn rollback(&mut self, block_number: u64) -> Result<()> {
