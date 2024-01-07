@@ -1,11 +1,3 @@
-[[bin]]
-name = "migrate"
-path = "src/index/migrate.rs"
-
-[[bin]]
-name = "indexer"
-path = "src/main.rs"
-
 [package]
 name = "eth3words"
 version = "0.1.0"
