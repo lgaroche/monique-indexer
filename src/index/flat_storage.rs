@@ -15,13 +15,14 @@ pub trait Store<T> {
     fn len(&self) -> usize;
     fn append(&mut self, item: Vec<T>, cursor: Option<u64>) -> Result<()>;
     fn get(&mut self, index: usize) -> Result<T>;
+    fn metadata(&self) -> Metadata;
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
-struct Metadata {
+pub struct Metadata {
     checksum: u64,
     last_batch_len: u64,
-    cursor: u64,
+    pub cursor: u64,
 }
 
 const META_LEN: usize = size_of::<Metadata>();
@@ -149,6 +150,10 @@ where
             None => get_inner(index)?,
         };
         Ok(v.clone())
+    }
+
+    fn metadata(&self) -> Metadata {
+        self.metadata
     }
 }
 
