@@ -64,10 +64,7 @@ where
         };
         println!("counter: {}", counter);
         println!("last_block: {}", last_block);
-        let table = RwLock::new(Flat::new(
-            path.join("flat.db"),
-            NonZeroUsize::new(50_000).unwrap(),
-        ));
+        let table = RwLock::new(Flat::new(path.join("flat.db"), 50_000).unwrap());
         let cache = RwLock::new(LruCache::new(NonZeroUsize::new(cache_size).unwrap()));
         Self {
             _data: std::marker::PhantomData,
@@ -120,7 +117,7 @@ where
             self.get_cache()?.put(i, self.counter as usize);
         }
 
-        self.get_table()?.append(inserted)?;
+        self.get_table()?.append(inserted, None)?;
 
         let stats_table = tx.create_table(Some("stats"), TableFlags::CREATE)?;
         tx.put(

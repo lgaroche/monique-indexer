@@ -1,3 +1,11 @@
+[[bin]]
+name = "migrate"
+path = "src/index/migrate.rs"
+
+[[bin]]
+name = "indexer"
+path = "src/main.rs"
+
 [package]
 name = "eth3words"
 version = "0.1.0"
@@ -22,3 +30,4 @@ rustc-hex = "2.1.0"
 tempfile = "3.6.0"
 lru = "0.12.1"
 libmdbx = "0.4.1"
+xxhash-rust = {version = "0.8.8", features=["xxh3"]}
