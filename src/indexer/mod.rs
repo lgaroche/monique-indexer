@@ -109,7 +109,7 @@ impl Indexer {
 
         for block_number in (info.last_db_block + 1)..=info.last_node_block {
             self.index_block(block_number).await?;
-            if log_time.elapsed().as_secs() > 3 {
+            if log_time.elapsed().as_secs() > 30 {
                 let processed = block_number - last_block;
 
                 info = self.info(false).await?;

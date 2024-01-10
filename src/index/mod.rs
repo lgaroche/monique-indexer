@@ -74,6 +74,12 @@ where
                 block_number, self.last_indexed_block
             );
             self.rollback(block_number)?;
+        } else if block_number != self.last_indexed_block + 1 {
+            Err(format!(
+                "queuing error: tried to skip block {} and queue block {}",
+                self.last_indexed_block + 1,
+                block_number
+            ))?;
         }
         let queue: Vec<&T> = self.pending.values().flatten().collect();
         let mut new_queue = IndexSet::with_capacity(addresses.len());
