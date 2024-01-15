@@ -1,0 +1,29 @@
+[package]
+name = "monique"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+lto = true          # Enable link-time optimization
+codegen-units = 1   # Reduce number of codegen units to increase optimizations
+
+[dependencies]
+bitvec = "1.0.1"
+ethers = {version="2.0.4", features=["ws", "rustls"]}
+tokio = {version="1.35.1", features=["rt", "macros"]}
+indexmap = "2.1.0"
+hex-literal = "0.4.1"
+rocket = { version = "=0.5.0", features = ["json"] }
+rustc-hex = "2.1.0"
+lru = "0.12.1"
+libmdbx = "0.4.2"
+xxhash-rust = {version = "0.8.8", features=["xxh3"]}
+eth_trie = "0.4.0"
+clap = {version = "4.4.16", features=["cargo"]}
+simple_logger = "4.3.3"
+log = "0.4.20"
+
+[dev-dependencies]
+tiny-keccak = "2.0.2"
+hex = "0.4.3"
+tempfile = "3.6.0"
