@@ -146,7 +146,7 @@ where
             self.file.seek(SeekFrom::Start(offset as u64))?;
             let mut buf = [0u8; N];
             self.file.read_exact(&mut buf)?;
-            Ok::<T, Box<dyn std::error::Error>>(buf.into())
+            Ok::<T, Box<dyn std::error::Error + Send + Sync>>(buf.into())
         };
         let v = match self.cache.as_mut() {
             Some(cache) => cache.try_get_or_insert(index, || get_inner(index))?.clone(),

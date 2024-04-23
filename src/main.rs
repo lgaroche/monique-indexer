@@ -10,17 +10,18 @@ use ethers::{
 };
 use index::SharedIndex;
 use indexer::Indexer;
-use log::error;
+use log::{error, warn};
 use rocket::{catchers, routes, Config};
 use simple_logger::SimpleLogger;
 use std::{
     clone::Clone,
     env,
+    marker::{Send, Sync},
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
 };
 
-pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -44,7 +45,8 @@ async fn main() -> Result<()> {
                     &common_args[..],
                     &[
                         arg!(--api "Enable API server"),
-                        arg!(-p --port <PORT> "API server port"),
+                        arg!(-p --port <PORT> "API server port")
+                            .value_parser(clap::value_parser!(u16)),
                         arg!(--address <ADDRESS> "API server address")
                             .value_parser(clap::value_parser!(Ipv4Addr)),
                     ][..],
@@ -64,10 +66,10 @@ async fn main() -> Result<()> {
     let datadir = matches.get_one::<PathBuf>("datadir").unwrap();
 
     let db = SharedIndex::<20, Address>::new(datadir.to_path_buf(), 1_000_000);
-    let provider = Provider::<Ws>::connect(provider_url).await?;
-    let mut indexer = Indexer::new(db.clone(), provider);
 
     if command == "info" {
+        let provider = Provider::<Ws>::connect(provider_url).await?;
+        let indexer = Indexer::new(db, provider);
         indexer.info().await?;
         return Ok(());
     }
@@ -79,23 +81,28 @@ async fn main() -> Result<()> {
         .get_one::<Ipv4Addr>("address")
         .unwrap_or(&default_address);
 
-    if !api {
-        if let Err(e) = indexer.run().await {
-            return Err(e)?;
-        }
-        return Ok(());
-    }
-
-    tokio::spawn({
+    let _db = db.clone();
+    let _provider_url = provider_url.clone();
+    let indexing_loop = tokio::spawn({
         async move {
             loop {
+                let provider = Provider::<Ws>::connect(_provider_url.clone())
+                    .await
+                    .unwrap();
+                let mut indexer = Indexer::new(_db.clone(), provider);
                 if let Err(e) = indexer.run().await {
-                    error!("{}", e);
-                    break;
+                    error!("Indexer failed with error: {}", e);
+                    warn!("Indexer will restart in 5 seconds...");
+                    std::thread::sleep(std::time::Duration::from_secs(5));
                 }
             }
         }
     });
+
+    if !api {
+        indexing_loop.await?;
+        return Ok(());
+    }
 
     let config = Config {
         port,

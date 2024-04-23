@@ -19,7 +19,7 @@ const TRANSFERBATCH_LOG: [u8; 32] =
 pub(crate) async fn process(
     provider: &Provider<Ws>,
     block: &Block<TxHash>,
-) -> Result<Vec<Address>, Box<dyn std::error::Error>> {
+) -> Result<Vec<Address>, Box<dyn std::error::Error + Send + Sync>> {
     let number = block.number.unwrap().as_u64();
 
     // add the block miner

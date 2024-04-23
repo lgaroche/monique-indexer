@@ -5,7 +5,7 @@ use bitvec::{field::BitField, order::Msb0, view::BitView};
 use ethers::{types::Address, utils::keccak256};
 use std::error::Error;
 
-type Result<T> = std::result::Result<T, Box<dyn Error>>;
+type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 #[derive(Debug)]
 pub struct WordError;

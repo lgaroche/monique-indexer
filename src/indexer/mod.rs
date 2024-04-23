@@ -8,7 +8,8 @@ use std::time;
 
 mod block;
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+type Result<T> =
+    std::result::Result<T, Box<dyn std::error::Error + std::marker::Send + std::marker::Sync>>;
 
 pub struct Indexer {
     pub db: SharedIndex<20, Address>,

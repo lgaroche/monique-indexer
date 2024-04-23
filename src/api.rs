@@ -44,8 +44,8 @@ pub enum ResolveError {
     WrongChecksum(Json<ErrorDescription>),
 }
 
-impl From<Box<dyn Error>> for ResolveError {
-    fn from(value: Box<dyn Error>) -> Self {
+impl From<Box<dyn Error + Send + Sync>> for ResolveError {
+    fn from(value: Box<dyn Error + Send + Sync>) -> Self {
         Self::InvalidAlias(Json(ErrorDescription {
             error: value.to_string(),
         }))
