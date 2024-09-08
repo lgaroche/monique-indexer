@@ -1,7 +1,5 @@
-use crate::{
-    index::{Indexed, SharedIndex},
-    words,
-};
+use crate::index::{Indexed, SharedIndex};
+use crate::words;
 use ethers::types::Address;
 use rocket::{
     catch, get,
@@ -91,7 +89,7 @@ pub fn resolve(alias: &str, set: &State<SharedIndex<20, Address>>) -> ApiRespons
         return Ok(None); // TODO: get mutable monics from the contract
     }
     let stored_index = index - PIVOT;
-    let addr = set.lock()?.get(stored_index)?;
+    let addr = set.read()?.get(stored_index)?;
     if let Some(addr) = addr {
         if words::checksum(addr) == checksum {
             let res = AddressInfo {

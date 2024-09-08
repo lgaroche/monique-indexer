@@ -4,7 +4,7 @@ use ethers::{
 };
 use hex_literal::hex;
 use indexmap::IndexSet;
-use log::trace;
+use log::{error, trace};
 
 const TRANSFER_LOG: [u8; 32] =
     /* Transfer(address,address,uint256) */
@@ -28,6 +28,14 @@ pub(crate) async fn process(
 
     if block.transactions.len() > 0 {
         let receipts = provider.get_block_receipts(number).await?;
+
+        if receipts.len() != block.transactions.len() {
+            error!(
+                "mismatched number of transactions and receipts in block {}",
+                number
+            );
+            return Err("bad block received".into());
+        }
 
         for tx in receipts {
             // add the tx sender
