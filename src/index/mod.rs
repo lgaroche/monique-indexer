@@ -121,16 +121,20 @@ where
                 panic!("commit: missed block {}", n);
             }
         }
+        let prep_time = start.elapsed().as_micros();
+
+        let start = Instant::now();
         let len = pending.len();
         self.storage.push_checkpoints(roots)?;
+        let checkpoints_time = start.elapsed().as_micros();
+
+        let start = Instant::now();
         self.storage.push(pending, target)?;
         self.last_committed_block = target;
-        let elapsed = start.elapsed().as_millis();
+        let push_time = start.elapsed().as_micros();
         info!(
-            "Commit: {} addresses in {} ms (avg: {} ms)",
-            len,
-            elapsed,
-            elapsed / len as u128
+            "Commit: addresses={len} prepare={prep_time}us checkpoints={checkpoints_time}us push={push_time}us average={}",
+            push_time / len as u128
         );
         Ok(len)
     }

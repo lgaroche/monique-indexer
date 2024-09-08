@@ -1,34 +1,24 @@
-mod api;
-mod index;
-mod indexer;
-mod words;
-
 use clap::{arg, command, Command};
 use ethers::{
     providers::{Provider, Ws},
     types::Address,
 };
-use index::SharedIndex;
-use indexer::Indexer;
 use log::{error, warn};
+use monique::api;
+use monique::index::SharedIndex;
+use monique::indexer::Indexer;
+use monique::Result;
 use rocket::{catchers, routes, Config};
-use simple_logger::SimpleLogger;
 use std::{
     clone::Clone,
     env,
-    marker::{Send, Sync},
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
 };
 
-pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
-
 #[tokio::main]
 async fn main() -> Result<()> {
-    SimpleLogger::new()
-        .env()
-        .with_level(log::LevelFilter::Info)
-        .init()?;
+    env_logger::init();
 
     let common_args = [
         arg!(-r --"rpc-url" <PROVIDER> "JSON-RPC Provider"),

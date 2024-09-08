@@ -11,7 +11,7 @@ use ethers::types::H256;
 use libmdbx::{
     Database, DatabaseOptions, Mode, NoWriteMap, PageSize, ReadWriteOptions, TableFlags, WriteFlags,
 };
-use log::{error, info};
+use log::{error, info, trace};
 use lru::LruCache;
 
 use crate::Result;
@@ -175,6 +175,7 @@ where
         for i in items {
             let counter = u32::to_be_bytes(self.counter);
             let item = <T as Into<[u8; N]>>::into(i.clone());
+            self.get_cache()?.put(i, self.counter as usize);
             match cursor.put(&item[..], &counter, WriteFlags::NO_OVERWRITE) {
                 Ok(_) => {
                     self.counter += 1;
@@ -185,7 +186,6 @@ where
                     return Err(e.into());
                 }
             }
-            self.get_cache()?.put(i, self.counter as usize);
         }
 
         self.get_table()?.append(inserted, Some(last_block))?;
@@ -226,6 +226,7 @@ where
 
     fn index(&self, item: T) -> Result<Option<usize>> {
         if let Some(index) = self.get_cache()?.get(&item.into()) {
+            trace!("Storage::index: cache hit {index}");
             return Ok(Some(*index));
         }
         let tx = self.db.begin_ro_txn()?;

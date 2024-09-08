@@ -1,4 +1,5 @@
 use crate::Result;
+use log::{trace, warn};
 use lru::LruCache;
 use std::{
     convert::From,
@@ -90,6 +91,8 @@ where
                 let mut buf = vec![0u8; N * last];
                 file.read_exact(&mut buf)?;
                 if xxh3_64(&buf) != metadata.checksum {
+                    warn!("metadata: {:?}", metadata);
+                    warn!("{}", xxh3_64(&buf));
                     Err("checksum mismatch")?;
                 }
                 metadata
@@ -142,6 +145,7 @@ where
 
     fn get(&mut self, index: usize) -> Result<T> {
         let mut get_inner = |index: usize| -> Result<T> {
+            trace!("Flat::get: cache miss {index}");
             let offset = size_of::<T>() * index;
             self.file.seek(SeekFrom::Start(offset as u64))?;
             let mut buf = [0u8; N];
