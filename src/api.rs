@@ -75,21 +75,21 @@ pub fn internal_error(_: &Request) -> Json<ErrorDescription> {
 }
 
 #[get("/")]
-pub fn stats(set: &State<SharedIndex<20, Address>>) -> Result<Json<Stats>, ResolveError> {
+pub async fn stats(set: &State<SharedIndex<20, Address>>) -> Result<Json<Stats>, ResolveError> {
     Ok(Json(Stats {
-        last_block: set.read()?.last_indexed_block,
-        unique_addresses: set.read()?.len(),
+        last_block: set.read().await.last_indexed_block,
+        unique_addresses: set.read().await.len(),
     }))
 }
 
 #[get("/resolve/<alias>")]
-pub fn resolve(alias: &str, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
+pub async fn resolve(alias: &str, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
     let (index, checksum) = words::to_index(alias.to_string())?;
     if index < PIVOT {
         return Ok(None); // TODO: get mutable monics from the contract
     }
     let stored_index = index - PIVOT;
-    let addr = set.read()?.get(stored_index)?;
+    let addr = set.read().await.get(stored_index)?;
     if let Some(addr) = addr {
         if words::checksum(addr) == checksum {
             let res = AddressInfo {
@@ -109,11 +109,11 @@ pub fn resolve(alias: &str, set: &State<SharedIndex<20, Address>>) -> ApiRespons
 }
 
 #[get("/index/<index>")]
-pub fn index(index: usize, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
+pub async fn index(index: usize, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
     if index < PIVOT {
         return Ok(None);
     }
-    let res = set.read()?.get(index - PIVOT)?;
+    let res = set.read().await.get(index - PIVOT)?;
     let info = res.map(|addr| AddressInfo {
         address: addr,
         index,
@@ -123,9 +123,9 @@ pub fn index(index: usize, set: &State<SharedIndex<20, Address>>) -> ApiResponse
 }
 
 #[get("/alias/<address>")]
-pub fn alias(address: String, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
+pub async fn alias(address: String, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
     let addr = Address::from_str(address.as_str())?;
-    let index = set.read()?.index(addr)?;
+    let index = set.read().await.index(addr)?;
     let res = index.map(|index| AddressInfo {
         address: addr,
         index: index + PIVOT,

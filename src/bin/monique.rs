@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
                 if let Err(e) = indexer.run().await {
                     error!("Indexer failed with error: {}", e);
                     warn!("Indexer will restart in 5 seconds...");
-                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                 }
             }
         }

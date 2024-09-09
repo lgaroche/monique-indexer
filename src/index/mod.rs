@@ -9,9 +9,10 @@ use crate::Result;
 use indexmap::IndexSet;
 use log::{info, warn};
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::Arc;
 use std::time::Instant;
 use std::{cmp, collections::HashMap};
+use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use self::checkpoint::CheckpointTrie;
 
@@ -35,18 +36,12 @@ where
 }
 
 impl<const N: usize, T> SharedIndex<N, T> {
-    pub fn read<'a>(&self) -> Result<RwLockReadGuard<IndexTable<N, T>>> {
-        match self.0.read() {
-            Ok(this) => Ok(this),
-            Err(e) => Err(format!("could not acquire lock: {}", e.to_string()).into()),
-        }
+    pub async fn read<'a>(&self) -> RwLockReadGuard<IndexTable<N, T>> {
+        self.0.read().await
     }
 
-    pub fn lock(&self) -> Result<RwLockWriteGuard<IndexTable<N, T>>> {
-        match self.0.write() {
-            Ok(this) => Ok(this),
-            Err(e) => Err(format!("could not acquire lock: {}", e.to_string()).into()),
-        }
+    pub async fn lock(&self) -> RwLockWriteGuard<IndexTable<N, T>> {
+        self.0.write().await
     }
 }
 
