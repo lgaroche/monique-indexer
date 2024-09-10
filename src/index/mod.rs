@@ -66,6 +66,8 @@ where
             addresses.len(),
             block_number
         );
+        // TODO: if storage lookup gets too slow and blocks other operations, consider unblocking `pending` and `counters`
+        // watch out for concurrency
         let mut pending = self.pending.write().await;
         let mut counters = self.counters.write().await;
         if block_number <= counters.last_indexed_block {
@@ -110,25 +112,27 @@ where
     pub async fn commit(&self, safe_block: u64) -> Result<usize> {
         trace!("committing up to block {}", safe_block);
         let start = Instant::now();
-        let (last_indexed_block, last_committed_block) = {
-            let c = self.get_counters().await;
-            (c.last_indexed_block, c.last_committed_block)
-        };
-        let target = cmp::min(safe_block, last_indexed_block);
-        let mut pending = vec![];
-        let mut roots = vec![];
-        let mut index = self.storage.len().await as u64;
-        for n in last_committed_block + 1..=target {
-            if let Some(mut a) = self.pending.write().await.remove(&n) {
-                let mut checkpoint = CheckpointTrie::new(index);
-                let root = checkpoint.bulk_insert(a.iter().map(|a| a.as_ref()).collect())?;
-                index += a.len() as u64;
-                roots.push(root);
-                pending.append(&mut a);
-            } else {
-                panic!("commit: missed block {}", n);
+        let (pending, target, roots) = {
+            let mut pending_blocks = self.pending.write().await;
+            let counters = self.get_counters().await;
+            let target = cmp::min(safe_block, counters.last_indexed_block);
+            let mut pending = vec![];
+            let mut roots = vec![];
+            let mut index = self.storage.len().await as u64;
+            for n in counters.last_committed_block + 1..=target {
+                if let Some(mut a) = pending_blocks.remove(&n) {
+                    let mut checkpoint = CheckpointTrie::new(index);
+                    let root = checkpoint.bulk_insert(a.iter().map(|a| a.as_ref()).collect())?;
+                    index += a.len() as u64;
+                    roots.push(root);
+                    pending.append(&mut a);
+                } else {
+                    panic!("commit: missed block {}", n);
+                }
             }
-        }
+            (pending, target, roots)
+        };
+
         let prep_time = start.elapsed().as_micros();
 
         let start = Instant::now();
