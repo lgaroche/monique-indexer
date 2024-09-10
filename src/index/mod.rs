@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use std::{cmp, collections::HashMap};
-use tokio::sync::{RwLock, RwLockReadGuard};
+use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
 
 use self::checkpoint::CheckpointTrie;
 
@@ -35,6 +35,7 @@ pub struct IndexTable<const N: usize, T> {
     counters: RwLock<Counters>,
     pending: RwLock<HashMap<u64, Vec<T>>>,
     storage: Storage<N, T>,
+    lock: Mutex<()>,
 }
 
 impl<const N: usize, T> IndexTable<N, T>
@@ -53,6 +54,7 @@ where
             pending: RwLock::new(HashMap::new()),
             counters: RwLock::new(counters),
             storage,
+            lock: Mutex::new(()),
         }
     }
 
@@ -111,11 +113,13 @@ where
 
     pub async fn commit(&self, safe_block: u64) -> Result<usize> {
         trace!("committing up to block {}", safe_block);
+        let _lock_guard = self.lock.try_lock()?; // Do not allow concurrent commits for now
         let start = Instant::now();
         let (pending, target, roots) = {
             let mut pending_blocks = self.pending.write().await;
             let counters = self.get_counters().await;
-            let target = cmp::min(safe_block, counters.last_indexed_block);
+            let last_block = pending_blocks.keys().max().cloned().unwrap_or(0);
+            let target = cmp::min(safe_block, last_block);
             let mut pending = vec![];
             let mut roots = vec![];
             let mut index = self.storage.len().await as u64;

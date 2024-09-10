@@ -155,17 +155,21 @@ where
     [u8; N]: From<T>,
 {
     async fn push(&self, items: Vec<T>, last_block: u64) -> Result<()> {
+        let counters = self.get_counters().await;
+        if counters.last_block >= last_block {
+            return Err("storage push: unexpected last_block value".into());
+        }
         let tx = self.db.begin_rw_txn()?;
         let table = tx.create_table(Some("table"), TableFlags::CREATE)?;
         let mut cursor = tx.cursor(&table)?;
         let mut inserted = vec![];
-        let mut counter = self.counters.read().await.counter;
+        let mut index = counters.counter;
         for i in items {
             let item = <T as Into<[u8; N]>>::into(i.clone());
-            self.cache.write().await.put(i, counter as usize);
-            match cursor.put(&item[..], &counter.to_be_bytes(), WriteFlags::NO_OVERWRITE) {
+            self.cache.write().await.put(i, index as usize);
+            match cursor.put(&item[..], &index.to_be_bytes(), WriteFlags::NO_OVERWRITE) {
                 Ok(_) => {
-                    counter += 1;
+                    index += 1;
                     inserted.push(i.clone());
                 }
                 Err(e) => {
@@ -184,7 +188,7 @@ where
         tx.put(
             &stats_table,
             b"counter",
-            &counter.to_be_bytes(),
+            &index.to_be_bytes(),
             WriteFlags::UPSERT,
         )?;
         tx.put(
@@ -197,7 +201,7 @@ where
         tx.commit()?;
 
         let mut counters = self.counters.write().await;
-        counters.counter = counter;
+        counters.counter = index;
         counters.last_block = last_block;
 
         Ok(())
