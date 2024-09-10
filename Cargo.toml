@@ -22,6 +22,7 @@ eth_trie = "0.4.0"
 clap = {version = "4.4.16", features=["cargo"]}
 log = "0.4.20"
 env_logger = "0.11.5"
+async-trait = "0.1.82"
 
 [dev-dependencies]
 tiny-keccak = "2.0.2"

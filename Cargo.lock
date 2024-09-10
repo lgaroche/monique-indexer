@@ -2160,6 +2160,7 @@ dependencies = [
 name = "monique"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "bitvec",
  "clap",
  "env_logger",

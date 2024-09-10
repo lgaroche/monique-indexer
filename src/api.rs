@@ -77,8 +77,8 @@ pub fn internal_error(_: &Request) -> Json<ErrorDescription> {
 #[get("/")]
 pub async fn stats(set: &State<SharedIndex<20, Address>>) -> Result<Json<Stats>, ResolveError> {
     Ok(Json(Stats {
-        last_block: set.read().await.last_indexed_block,
-        unique_addresses: set.read().await.len(),
+        last_block: set.get_counters().await.last_indexed_block,
+        unique_addresses: set.len().await,
     }))
 }
 
@@ -89,7 +89,7 @@ pub async fn resolve(alias: &str, set: &State<SharedIndex<20, Address>>) -> ApiR
         return Ok(None); // TODO: get mutable monics from the contract
     }
     let stored_index = index - PIVOT;
-    let addr = set.read().await.get(stored_index)?;
+    let addr = set.get(stored_index).await?;
     if let Some(addr) = addr {
         if words::checksum(addr) == checksum {
             let res = AddressInfo {
@@ -113,7 +113,7 @@ pub async fn index(index: usize, set: &State<SharedIndex<20, Address>>) -> ApiRe
     if index < PIVOT {
         return Ok(None);
     }
-    let res = set.read().await.get(index - PIVOT)?;
+    let res = set.get(index - PIVOT).await?;
     let info = res.map(|addr| AddressInfo {
         address: addr,
         index,
@@ -125,7 +125,7 @@ pub async fn index(index: usize, set: &State<SharedIndex<20, Address>>) -> ApiRe
 #[get("/alias/<address>")]
 pub async fn alias(address: String, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
     let addr = Address::from_str(address.as_str())?;
-    let index = set.read().await.index(addr)?;
+    let index = set.index(addr).await?;
     let res = index.map(|index| AddressInfo {
         address: addr,
         index: index + PIVOT,

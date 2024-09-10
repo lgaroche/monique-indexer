@@ -2,3 +2,7 @@
 /db*
 /backups
 *.log
+**/*.db
+**/*.dat
+**/*.lck
+.DS_Store

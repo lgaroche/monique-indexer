@@ -1,11 +1,6 @@
+use async_trait::async_trait;
 use core::panic;
-use std::{
-    cmp,
-    hash::Hash,
-    num::NonZeroUsize,
-    path::PathBuf,
-    sync::{RwLock, RwLockWriteGuard},
-};
+use std::{cmp, hash::Hash, num::NonZeroUsize, path::PathBuf};
 
 use ethers::types::H256;
 use libmdbx::{
@@ -13,6 +8,7 @@ use libmdbx::{
 };
 use log::{error, info, trace};
 use lru::LruCache;
+use tokio::sync::{RwLock, RwLockReadGuard};
 
 use crate::Result;
 
@@ -21,18 +17,22 @@ use super::{
     Indexed,
 };
 
+pub struct Counters {
+    pub counter: u32,
+    pub last_block: u64,
+}
+
 pub struct Storage<const N: usize, T> {
     _data: std::marker::PhantomData<T>,
     db: Database<NoWriteMap>,
     table: RwLock<Flat<T, N>>,
-    counter: u32,
-    pub last_block: u64,
+    counters: RwLock<Counters>,
     cache: RwLock<LruCache<T, usize>>,
     checkpoints: RwLock<Flat<H256, 32>>,
 }
 
 pub trait Push<T> {
-    fn push(&mut self, item: Vec<T>, last_block: u64) -> Result<()>;
+    async fn push(&self, item: Vec<T>, last_block: u64) -> Result<()>;
 }
 
 impl<const N: usize, T> Storage<N, T>
@@ -100,28 +100,35 @@ where
             _data: std::marker::PhantomData,
             db,
             table,
-            counter,
-            last_block,
+            counters: RwLock::new(Counters {
+                counter,
+                last_block,
+            }),
             cache,
             checkpoints: RwLock::new(checkpoint_table),
         }
     }
 
+    pub async fn get_counters(&self) -> RwLockReadGuard<Counters> {
+        self.counters.read().await
+    }
+
     //TODO: tests!! there are probably many catastrophic edge cases here
-    pub fn push_checkpoints(&self, roots: Vec<H256>) -> Result<()> {
-        let mut checkpoints = self.get_checkpoint_table()?;
+    pub async fn push_checkpoints(&self, roots: Vec<H256>) -> Result<()> {
+        let mut checkpoints = self.checkpoints.write().await;
+        let last_block = self.counters.read().await.last_block;
         match checkpoints.len() {
-            n if n > self.last_block as usize => {
+            n if n > last_block as usize => {
                 // verify
-                let to_verify = std::cmp::min(n - self.last_block as usize, roots.len());
+                let to_verify = std::cmp::min(n - last_block as usize, roots.len());
                 if to_verify > 0 {
                     info!("verifying {} checkpoints", to_verify);
                     for i in 0..to_verify {
-                        let root = checkpoints.get(self.last_block as usize + i)?;
+                        let root = checkpoints.get(last_block as usize + i)?;
                         if root != roots[i] {
                             panic!(
                                 "checkpoint mismatch at block {}: {} != {}",
-                                self.last_block + i as u64,
+                                last_block + i as u64,
                                 root,
                                 roots[i]
                             );
@@ -140,27 +147,6 @@ where
         }
         Ok(())
     }
-
-    fn get_cache(&self) -> Result<RwLockWriteGuard<LruCache<T, usize>>> {
-        match self.cache.write() {
-            Ok(this) => Ok(this),
-            Err(e) => Err(format!("could not acquire cache lock: {}", e.to_string()).into()),
-        }
-    }
-
-    fn get_table(&self) -> Result<RwLockWriteGuard<Flat<T, N>>> {
-        match self.table.write() {
-            Ok(this) => Ok(this),
-            Err(e) => Err(format!("could not acquire table lock: {}", e.to_string()).into()),
-        }
-    }
-
-    fn get_checkpoint_table(&self) -> Result<RwLockWriteGuard<Flat<H256, 32>>> {
-        match self.checkpoints.write() {
-            Ok(this) => Ok(this),
-            Err(e) => Err(format!("could not acquire checkpoints lock: {}", e.to_string()).into()),
-        }
-    }
 }
 
 impl<const N: usize, T> Push<T> for Storage<N, T>
@@ -168,18 +154,18 @@ where
     T: AsRef<[u8]> + From<[u8; N]> + cmp::PartialEq + std::hash::Hash + Eq + Clone + Copy,
     [u8; N]: From<T>,
 {
-    fn push(&mut self, items: Vec<T>, last_block: u64) -> Result<()> {
+    async fn push(&self, items: Vec<T>, last_block: u64) -> Result<()> {
         let tx = self.db.begin_rw_txn()?;
         let table = tx.create_table(Some("table"), TableFlags::CREATE)?;
         let mut cursor = tx.cursor(&table)?;
         let mut inserted = vec![];
+        let mut counter = self.counters.read().await.counter;
         for i in items {
-            let counter = u32::to_be_bytes(self.counter);
             let item = <T as Into<[u8; N]>>::into(i.clone());
-            self.get_cache()?.put(i, self.counter as usize);
-            match cursor.put(&item[..], &counter, WriteFlags::NO_OVERWRITE) {
+            self.cache.write().await.put(i, counter as usize);
+            match cursor.put(&item[..], &counter.to_be_bytes(), WriteFlags::NO_OVERWRITE) {
                 Ok(_) => {
-                    self.counter += 1;
+                    counter += 1;
                     inserted.push(i.clone());
                 }
                 Err(e) => {
@@ -189,13 +175,16 @@ where
             }
         }
 
-        self.get_table()?.append(inserted, Some(last_block))?;
+        self.table
+            .write()
+            .await
+            .append(inserted, Some(last_block))?;
 
         let stats_table = tx.create_table(Some("stats"), TableFlags::CREATE)?;
         tx.put(
             &stats_table,
             b"counter",
-            &self.counter.to_be_bytes(),
+            &counter.to_be_bytes(),
             WriteFlags::UPSERT,
         )?;
         tx.put(
@@ -204,29 +193,35 @@ where
             last_block.to_be_bytes(),
             WriteFlags::UPSERT,
         )?;
-        self.last_block = last_block;
+
         tx.commit()?;
+
+        let mut counters = self.counters.write().await;
+        counters.counter = counter;
+        counters.last_block = last_block;
 
         Ok(())
     }
 }
 
+#[async_trait]
 impl<const N: usize, T> Indexed<T> for Storage<N, T>
 where
-    T: AsRef<[u8]> + From<[u8; N]> + PartialEq + Hash + Eq + Copy,
+    T: AsRef<[u8]> + From<[u8; N]> + PartialEq + Hash + Eq + Copy + Send + Sync,
     [u8; N]: From<T>,
 {
-    fn len(&self) -> usize {
-        self.counter as usize
+    async fn len(&self) -> usize {
+        self.get_counters().await.counter as usize
     }
 
-    fn get(&self, index: usize) -> Result<Option<T>> {
-        let item = self.get_table()?.get(index as usize)?;
+    async fn get(&self, index: usize) -> Result<Option<T>> {
+        let item = self.table.write().await.get(index as usize)?;
         Ok(Some(item))
     }
 
-    fn index(&self, item: T) -> Result<Option<usize>> {
-        if let Some(index) = self.get_cache()?.get(&item.into()) {
+    async fn index(&self, item: T) -> Result<Option<usize>> {
+        let mut cache = self.cache.write().await;
+        if let Some(index) = cache.get(&item.into()) {
             trace!("Storage::index: cache hit {index}");
             return Ok(Some(*index));
         }
@@ -235,7 +230,7 @@ where
             let slice = <T as Into<[u8; N]>>::into(item);
             if let Some(counter_be) = tx.get(&table, &slice)? {
                 let counter = u32::from_be_bytes(counter_be) as usize;
-                self.get_cache()?.put(item, counter);
+                cache.put(item, counter);
                 Ok(Some(counter))
             } else {
                 Ok(None)

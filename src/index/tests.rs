@@ -10,26 +10,26 @@ mod tests {
     const BATCH_SIZE: u32 = 30_000;
     const GET_ITERATIONS: u32 = 400_000;
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn benchmark() {
+    async fn benchmark() {
         let temp_dir = tempdir().unwrap();
         let path = temp_dir.path().join("benchmark-test.db");
         let mut index = Storage::<20, [u8; 20]>::new(path, 1_000_000);
-        println!("start: {}", index.len());
+        println!("start: {}", index.len().await);
         let mut gen = rand::thread_rng();
         let mut block_num = 0;
-        while index.len() < TARGET_DB_SIZE as usize {
+        while index.len().await < TARGET_DB_SIZE as usize {
             let mut items = Vec::new();
             let t = std::time::Instant::now();
             for _ in 0..BATCH_SIZE {
                 let v = gen.gen::<[u8; 20]>();
                 items.push(v);
             }
-            index.push(items, block_num).expect("push");
+            index.push(items, block_num).await.expect("push");
             println!(
                 "items: {} - {} ns",
-                index.len(),
+                index.len().await,
                 t.elapsed().as_nanos() / (BATCH_SIZE as u128)
             );
             block_num += 1;
@@ -38,8 +38,8 @@ mod tests {
         let t = std::time::Instant::now();
         let mut items = Vec::new();
         for _ in 0..GET_ITERATIONS {
-            let key = gen.gen::<u32>() % index.len() as u32;
-            let v = index.get(key as usize).expect("get");
+            let key = gen.gen::<u32>() % index.len().await as u32;
+            let v = index.get(key as usize).await.expect("get");
             assert!(v.is_some());
             items.push(v.unwrap());
         }
@@ -50,7 +50,7 @@ mod tests {
 
         let t = std::time::Instant::now();
         for i in &items {
-            let key = index.index(i.clone()).expect("index");
+            let key = index.index(i.clone()).await.expect("index");
             assert!(key.is_some());
         }
         println!(
