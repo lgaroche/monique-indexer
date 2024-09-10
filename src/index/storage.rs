@@ -17,6 +17,7 @@ use super::{
     Indexed,
 };
 
+#[derive(Clone)]
 pub struct Counters {
     pub counter: u32,
     pub last_block: u64,
@@ -155,7 +156,7 @@ where
     [u8; N]: From<T>,
 {
     async fn push(&self, items: Vec<T>, last_block: u64) -> Result<()> {
-        let counters = self.get_counters().await;
+        let counters = self.get_counters().await.clone();
         if counters.last_block >= last_block {
             return Err("storage push: unexpected last_block value".into());
         }
@@ -226,7 +227,6 @@ where
     async fn index(&self, item: T) -> Result<Option<usize>> {
         let mut cache = self.cache.write().await;
         if let Some(index) = cache.get(&item.into()) {
-            trace!("Storage::index: cache hit {index}");
             return Ok(Some(*index));
         }
         let tx = self.db.begin_ro_txn()?;
