@@ -39,10 +39,9 @@ impl Indexer {
 
         let last_node_block = self.provider.get_block_number().await?;
 
-        let db = self.db.read()?;
-        let last_db_block = db.last_indexed_block;
+        let last_db_block = self.db.get_counters().await.last_indexed_block;
         let progress = (10_000 * last_db_block / last_node_block.as_u64()) as f64 / 100.0;
-        let addr_count = db.len();
+        let addr_count = self.db.len().await;
         info!(
             "Indexing stats: [{last_db_block}/{last_node_block}] [{progress}%] [safe: {}] [index: {addr_count}]",
             safe_block,
@@ -74,7 +73,7 @@ impl Indexer {
             );
             let info = self.info().await?;
             if info.safe_block > safe_block {
-                let len = self.db.lock()?.commit(info.safe_block)?;
+                let len = self.db.commit(info.safe_block).await?;
                 info!(
                     "Committed up to block {} [{} addresses]",
                     info.safe_block, len
@@ -88,9 +87,9 @@ impl Indexer {
     }
 
     pub async fn catch_up(&mut self) -> Result<Info> {
-        let start = self.db.read()?.last_indexed_block + 1;
+        let start = self.db.get_counters().await.last_indexed_block + 1;
         let mut log_time = time::Instant::now();
-        let mut last_count = self.db.read()?.len();
+        let mut last_count = self.db.len().await;
         let mut last_block = start;
         let mut times = (0usize, 0u128, 0u128, 0u128);
 
@@ -111,15 +110,16 @@ impl Indexer {
             let processed = block_number - last_block;
             if log_time.elapsed().as_secs() > 20 && processed > 0 {
                 info = self.info().await?;
-                let committed = if info.safe_block > self.db.read()?.last_committed_block {
-                    self.db.lock()?.commit(info.safe_block)?
-                } else {
-                    0
-                };
+                let committed =
+                    if info.safe_block > self.db.get_counters().await.last_committed_block {
+                        self.db.commit(info.safe_block).await?
+                    } else {
+                        0
+                    };
 
                 // blocks per second
                 let speed = processed as f64 / log_time.elapsed().as_secs_f64();
-                let counter = self.db.read()?.len();
+                let counter = self.db.len().await;
                 info!(
                     "Block: {} [{} new addresses] [committed {}] [{} blk/s] [{} ms per block]",
                     block_number,
@@ -141,8 +141,8 @@ impl Indexer {
             }
         }
         info = self.info().await?;
-        let committed = if info.safe_block > self.db.read()?.last_committed_block {
-            self.db.lock()?.commit(info.safe_block)?
+        let committed = if info.safe_block > self.db.get_counters().await.last_committed_block {
+            self.db.commit(info.safe_block).await?
         } else {
             0
         };
@@ -151,6 +151,7 @@ impl Indexer {
     }
 
     async fn index_block(&mut self, number: u64) -> Result<(usize, u128, u128, u128)> {
+        trace!("indexing block {}", number);
         let id = BlockId::Number(number.into());
 
         // get block
@@ -166,7 +167,7 @@ impl Indexer {
 
         // queue block
         let start = time::Instant::now();
-        let result = self.db.lock()?.queue(block.number.unwrap().as_u64(), set)?;
+        let result = self.db.queue(block.number.unwrap().as_u64(), set).await?;
         let queue_time = start.elapsed().as_micros();
 
         trace!(

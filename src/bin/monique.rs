@@ -4,10 +4,10 @@ use ethers::{
     types::Address,
 };
 use log::{error, warn};
-use monique::api;
 use monique::index::SharedIndex;
 use monique::indexer::Indexer;
 use monique::Result;
+use monique::{api, index::IndexTable};
 use rocket::{catchers, routes, Config};
 use std::{
     clone::Clone,
@@ -55,7 +55,8 @@ async fn main() -> Result<()> {
         .unwrap_or(&default_provider);
     let datadir = matches.get_one::<PathBuf>("datadir").unwrap();
 
-    let db = SharedIndex::<20, Address>::new(datadir.to_path_buf(), 1_000_000);
+    let index_table = IndexTable::<20, Address>::new(datadir.to_path_buf(), 1_000_000).await;
+    let db = SharedIndex::<20, Address>::new(index_table);
 
     if command == "info" {
         let provider = Provider::<Ws>::connect(provider_url).await?;
@@ -83,7 +84,7 @@ async fn main() -> Result<()> {
                 if let Err(e) = indexer.run().await {
                     error!("Indexer failed with error: {}", e);
                     warn!("Indexer will restart in 5 seconds...");
-                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                 }
             }
         }
