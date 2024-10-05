@@ -4,7 +4,10 @@ mod tests {
     use ethers::core::rand::Rng;
     use tempfile::tempdir;
 
-    use crate::index::{storage::Push, Indexed, Storage};
+    use crate::index::{
+        storage::{Block, Push},
+        Indexed, Storage,
+    };
 
     const TARGET_DB_SIZE: u32 = 1_000_000;
     const BATCH_SIZE: u32 = 30_000;
@@ -15,10 +18,10 @@ mod tests {
     async fn benchmark() {
         let temp_dir = tempdir().unwrap();
         let path = temp_dir.path().join("benchmark-test.db");
-        let mut index = Storage::<20, [u8; 20]>::new(path, 1_000_000);
+        let index = Storage::<20, [u8; 20]>::new(path, 1_000_000);
         println!("start: {}", index.len().await);
         let mut gen = rand::thread_rng();
-        let mut block_num = 0;
+        let mut block_num = 1;
         while index.len().await < TARGET_DB_SIZE as usize {
             let mut items = Vec::new();
             let t = std::time::Instant::now();
@@ -26,7 +29,12 @@ mod tests {
                 let v = gen.gen::<[u8; 20]>();
                 items.push(v);
             }
-            index.push(items, block_num).await.expect("push");
+            let blocks = vec![Block {
+                number: block_num,
+                items,
+                root_hash: [0; 32].into(),
+            }];
+            index.push(blocks).await.expect("push");
             println!(
                 "items: {} - {} ns",
                 index.len().await,

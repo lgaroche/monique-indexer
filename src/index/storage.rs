@@ -1,39 +1,62 @@
 use async_trait::async_trait;
-use core::panic;
 use std::{cmp, hash::Hash, num::NonZeroUsize, path::PathBuf};
+use tiny_keccak::{Hasher, Keccak};
+use xxhash_rust::xxh3::xxh3_64;
 
 use ethers::types::H256;
 use libmdbx::{
     Database, DatabaseOptions, Mode, NoWriteMap, PageSize, ReadWriteOptions, TableFlags, WriteFlags,
 };
-use log::{error, info, trace};
+use log::{info, trace, warn};
 use lru::LruCache;
 use tokio::sync::{RwLock, RwLockReadGuard};
 
 use crate::Result;
 
-use super::{
-    flat_storage::{Flat, Store},
-    Indexed,
-};
+use super::Indexed;
 
 #[derive(Clone)]
 pub struct Counters {
     pub counter: u32,
-    pub last_block: u64,
+    pub last_block: u32,
 }
 
 pub struct Storage<const N: usize, T> {
     _data: std::marker::PhantomData<T>,
     db: Database<NoWriteMap>,
-    table: RwLock<Flat<T, N>>,
     counters: RwLock<Counters>,
     cache: RwLock<LruCache<T, usize>>,
-    checkpoints: RwLock<Flat<H256, 32>>,
+    index_cache: RwLock<LruCache<usize, T>>,
 }
 
+#[derive(Clone)]
+pub struct Block<T> {
+    pub number: u64,
+    pub items: Vec<T>,
+    pub root_hash: H256,
+}
+
+impl<T> Block<T> {
+    pub fn compute_hash(&self, previous_hash: H256) -> H256 {
+        let mut hash = [0u8; 32];
+        let mut keccak = Keccak::v256();
+        keccak.update(previous_hash.as_bytes());
+        keccak.update(self.root_hash.as_ref());
+        keccak.finalize(&mut hash);
+        let res = H256::from(hash);
+        trace!(
+            "computed hash for block {}: {} (previous: {}",
+            self.number,
+            res,
+            previous_hash
+        );
+        res
+    }
+}
+
+#[async_trait]
 pub trait Push<T> {
-    async fn push(&self, item: Vec<T>, last_block: u64) -> Result<()>;
+    async fn push(&self, blocks: Vec<Block<T>>) -> Result<()>;
 }
 
 impl<const N: usize, T> Storage<N, T>
@@ -41,14 +64,19 @@ where
     T: Sized + AsRef<[u8]> + PartialEq + Hash + Eq + Copy + std::convert::From<[u8; N]>,
 {
     pub fn new(path: PathBuf, cache_size: usize) -> Self {
+        // table format:
+        // stats: 'counter' -> u32, 'last_block' -> u32
+        // table: xxhash32(address) -> [index, ...]
+        // index: index -> address
+        // blocks: block_number -> start_index | count | checkpoint_hash
         let db = Database::open_with_options(
             &path,
             DatabaseOptions {
-                max_tables: Some(2),
-                page_size: Some(PageSize::MinimalAcceptable),
+                max_tables: Some(4),
+                page_size: Some(PageSize::Set(16384)),
                 mode: Mode::ReadWrite(ReadWriteOptions {
                     min_size: Some(17179869184),
-                    sync_mode: libmdbx::SyncMode::NoMetaSync,
+                    sync_mode: libmdbx::SyncMode::Durable,
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -61,52 +89,29 @@ where
                 let counter = tx.get(&table, b"counter").unwrap();
                 let last_block = tx.get(&table, b"last_block").unwrap();
                 (
-                    u32::from_be_bytes(counter.unwrap()),
-                    u64::from_be_bytes(last_block.unwrap()),
+                    u32::from_le_bytes(counter.unwrap()),
+                    u32::from_le_bytes(last_block.unwrap()),
                 )
             } else {
                 (0, 0)
             }
         };
-        let flat_db = Flat::new(path.join("flat.db"), 50_000).unwrap();
-        let metadata = flat_db.metadata();
 
         info!("counter: {}", counter);
         info!("last_block: {}", last_block);
-        info!("flat db metadata: {:?}", metadata);
 
-        if metadata.cursor != last_block {
-            panic!("flat db cursor does not match last block");
-        }
-
-        if counter as usize != flat_db.len() {
-            panic!("counter does not match flat db len");
-        }
-
-        let checkpoint_table = Flat::new(path.join("checkpoints.db"), 0).unwrap();
-        let checkpoint_count = checkpoint_table.len();
-        info!("checkpoints: {}", checkpoint_count);
-        if checkpoint_count > last_block as usize {
-            info!("there are more checkpoints than blocks in db: indexed blocks will be verified against the checkpoints");
-        } else if checkpoint_count == last_block as usize {
-            info!("checkpoints will be created during indexing");
-        } else {
-            panic!("checkpoints missing, aborting");
-        }
-
-        let table = RwLock::new(flat_db);
         let cache = RwLock::new(LruCache::new(NonZeroUsize::new(cache_size).unwrap()));
+        let index_cache = RwLock::new(LruCache::new(NonZeroUsize::new(cache_size).unwrap()));
 
         Self {
             _data: std::marker::PhantomData,
             db,
-            table,
             counters: RwLock::new(Counters {
                 counter,
                 last_block,
             }),
             cache,
-            checkpoints: RwLock::new(checkpoint_table),
+            index_cache,
         }
     }
 
@@ -114,88 +119,103 @@ where
         self.counters.read().await
     }
 
-    //TODO: tests!! there are probably many catastrophic edge cases here
-    pub async fn push_checkpoints(&self, roots: Vec<H256>) -> Result<()> {
-        let mut checkpoints = self.checkpoints.write().await;
-        let last_block = self.counters.read().await.last_block;
-        match checkpoints.len() {
-            n if n > last_block as usize => {
-                // verify
-                let to_verify = std::cmp::min(n - last_block as usize, roots.len());
-                if to_verify > 0 {
-                    info!("verifying {} checkpoints", to_verify);
-                    for i in 0..to_verify {
-                        let root = checkpoints.get(last_block as usize + i)?;
-                        if root != roots[i] {
-                            panic!(
-                                "checkpoint mismatch at block {}: {} != {}",
-                                last_block + i as u64,
-                                root,
-                                roots[i]
-                            );
-                        }
-                    }
-                }
-                let to_append = roots[to_verify..].to_vec();
-                if to_append.len() > 0 {
-                    info!("appending {} checkpoints", to_append.len());
-                    checkpoints.append(to_append, None)?;
-                }
-            }
-            n => {
-                checkpoints.append(roots, Some(n as u64))?;
-            }
+    fn get_block_hash(&self, number: u32) -> Result<H256> {
+        if number == 0 {
+            return Ok(H256::zero());
         }
-        Ok(())
+        let tx = self.db.begin_ro_txn()?;
+        let blocks_table = tx.open_table(Some("blocks"))?;
+        let key = number.to_le_bytes();
+        match tx.get::<Vec<u8>>(&blocks_table, &key)? {
+            Some(v) => Ok(H256::from_slice(&v)),
+            None => Err("storage get_block_hash: block not found".into()),
+        }
     }
 }
 
+#[async_trait]
 impl<const N: usize, T> Push<T> for Storage<N, T>
 where
-    T: AsRef<[u8]> + From<[u8; N]> + cmp::PartialEq + std::hash::Hash + Eq + Clone + Copy,
+    T: AsRef<[u8]>
+        + From<[u8; N]>
+        + cmp::PartialEq
+        + std::hash::Hash
+        + Eq
+        + Clone
+        + Copy
+        + Send
+        + Sync,
     [u8; N]: From<T>,
 {
-    async fn push(&self, items: Vec<T>, last_block: u64) -> Result<()> {
+    async fn push(&self, blocks: Vec<Block<T>>) -> Result<()> {
+        let mut previous_block_hash = match blocks.first() {
+            Some(block) => {
+                if block.number == 0 {
+                    return Err("storage push: unexpected block number 0".into());
+                } else {
+                    self.get_block_hash(block.number as u32 - 1)?
+                }
+            }
+            None => return Ok(()),
+        };
+
         let counters = self.get_counters().await.clone();
-        if counters.last_block >= last_block {
-            return Err("storage push: unexpected last_block value".into());
-        }
+        let mut last_block = counters.last_block;
         let tx = self.db.begin_rw_txn()?;
-        let table = tx.create_table(Some("table"), TableFlags::CREATE)?;
-        let mut cursor = tx.cursor(&table)?;
-        let mut inserted = vec![];
+        let flags = TableFlags::CREATE | TableFlags::INTEGER_KEY;
+        let blocks_table = tx.create_table(Some("blocks"), flags)?;
+        let index_table = tx.create_table(Some("index"), flags)?;
+        let stats_table = tx.create_table(Some("stats"), TableFlags::CREATE)?;
+        let table = tx.create_table(
+            Some("table"),
+            flags | TableFlags::DUP_SORT | TableFlags::DUP_FIXED | TableFlags::INTEGER_DUP,
+        )?;
+        let mut block_cursor = tx.cursor(&blocks_table)?;
+        let mut index_cursor = tx.cursor(&index_table)?;
+        let mut table_cursor = tx.cursor(&table)?;
         let mut index = counters.counter;
-        for i in items {
-            let item = <T as Into<[u8; N]>>::into(i.clone());
-            self.cache.write().await.put(i, index as usize);
-            match cursor.put(&item[..], &index.to_be_bytes(), WriteFlags::NO_OVERWRITE) {
-                Ok(_) => {
-                    index += 1;
-                    inserted.push(i.clone());
-                }
-                Err(e) => {
-                    error!("{}", e);
-                    return Err(e.into());
-                }
+        for block in blocks.iter() {
+            if block.number != last_block as u64 + 1 {
+                return Err("storage push: unexpected block number".into());
+            }
+            last_block = block.number as u32;
+            let block_hash = block.compute_hash(previous_block_hash);
+            let key = (block.number as u32).to_le_bytes();
+            if block.number % 10_000 == 0 {
+                info!("checkpoint: {} {}", block.number, block_hash);
+            }
+            previous_block_hash = block_hash;
+            block_cursor.put(
+                &key,
+                &block_hash.as_bytes(),
+                WriteFlags::APPEND | WriteFlags::NO_OVERWRITE,
+            )?;
+            for i in block.items.iter() {
+                let item = <T as Into<[u8; N]>>::into(i.clone());
+                let key = index.to_le_bytes();
+                index_cursor.put(&key, &item[..], WriteFlags::APPEND)?;
+
+                let hash = (xxh3_64(&item[..]) as u32).to_le_bytes();
+                let value = index.to_le_bytes();
+                table_cursor.put(&hash, &value, WriteFlags::APPEND_DUP)?;
+
+                self.cache.write().await.put(*i, index as usize);
+                self.index_cache.write().await.put(index as usize, *i);
+
+                index += 1;
             }
         }
 
-        self.table
-            .write()
-            .await
-            .append(inserted, Some(last_block))?;
-
-        let stats_table = tx.create_table(Some("stats"), TableFlags::CREATE)?;
         tx.put(
             &stats_table,
             b"counter",
-            &index.to_be_bytes(),
+            &index.to_le_bytes(),
             WriteFlags::UPSERT,
         )?;
         tx.put(
             &stats_table,
             b"last_block",
-            last_block.to_be_bytes(),
+            last_block.to_le_bytes(),
             WriteFlags::UPSERT,
         )?;
 
@@ -220,25 +240,53 @@ where
     }
 
     async fn get(&self, index: usize) -> Result<Option<T>> {
-        let item = self.table.write().await.get(index as usize)?;
-        Ok(Some(item))
+        if let Some(item) = self.index_cache.write().await.get(&index) {
+            return Ok(Some(*item));
+        }
+        let tx = self.db.begin_ro_txn()?;
+        if let Ok(index_table) = tx.open_table(Some("index")) {
+            return match tx.get(&index_table, &(index as u32).to_le_bytes())? {
+                Some(data) => {
+                    let item = T::from(data);
+                    self.index_cache.write().await.put(index, item);
+                    Ok(Some(item))
+                }
+                None => Ok(None),
+            };
+        }
+        Ok(None)
     }
 
     async fn index(&self, item: T) -> Result<Option<usize>> {
-        let mut cache = self.cache.write().await;
-        if let Some(index) = cache.get(&item.into()) {
+        trace!("index: {:?}", item.as_ref());
+        if let Some(index) = self.cache.write().await.get(&item.into()) {
+            trace!("cache hit");
             return Ok(Some(*index));
         }
         let tx = self.db.begin_ro_txn()?;
         if let Ok(table) = tx.open_table(Some("table")) {
-            let slice = <T as Into<[u8; N]>>::into(item);
-            if let Some(counter_be) = tx.get(&table, &slice)? {
-                let counter = u32::from_be_bytes(counter_be) as usize;
-                cache.put(item, counter);
-                Ok(Some(counter))
-            } else {
-                Ok(None)
+            let mut cursor = tx.cursor(&table)?;
+            let hash = (xxh3_64(item.as_ref()) as u32).to_le_bytes();
+            for value in cursor.iter_from::<[u8; 4], [u8; 4]>(&hash) {
+                match value {
+                    Ok((k, v)) => {
+                        if k != hash {
+                            break;
+                        }
+                        let key = u32::from_le_bytes(v) as usize;
+                        let item_test = self.get(key).await?;
+                        if item_test == Some(item) {
+                            self.cache.write().await.put(item, key);
+                            return Ok(Some(key));
+                        }
+                    }
+                    Err(e) => {
+                        warn!("error: {:?}", e);
+                        break;
+                    }
+                }
             }
+            Ok(None)
         } else {
             Ok(None)
         }

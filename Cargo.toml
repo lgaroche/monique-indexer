@@ -1,6 +1,6 @@
 [package]
 name = "monique"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [profile.release]
@@ -23,8 +23,8 @@ clap = {version = "4.4.16", features=["cargo"]}
 log = "0.4.20"
 env_logger = "0.11.5"
 async-trait = "0.1.82"
+tiny-keccak = "2.0.2"
 
 [dev-dependencies]
-tiny-keccak = "2.0.2"
 hex = "0.4.3"
 tempfile = "3.6.0"
