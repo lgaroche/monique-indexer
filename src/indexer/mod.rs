@@ -10,7 +10,7 @@ use std::time;
 mod block;
 
 pub struct Indexer {
-    pub db: SharedIndex<20, Address>,
+    db: SharedIndex<20, Address>,
     provider: Provider<Ws>,
 }
 
@@ -87,10 +87,7 @@ impl Indexer {
     }
 
     pub async fn catch_up(&mut self) -> Result<Info> {
-        let start = self.db.get_counters().await.last_indexed_block + 1;
         let mut log_time = time::Instant::now();
-        let mut last_count = self.db.len().await;
-        let mut last_block = start;
         let mut times = (0usize, 0u128, 0u128, 0u128);
 
         let mut info = self.info().await?;
@@ -99,7 +96,9 @@ impl Indexer {
             info.last_node_block - info.last_db_block
         );
 
-        for block_number in (info.last_db_block + 1)..=info.last_node_block {
+        let mut last_block = info.last_db_block + 1;
+        let mut last_count = self.db.len().await;
+        for block_number in last_block..=info.last_node_block {
             let (count, get_block_time, process_time, queue_time) =
                 self.index_block(block_number).await?;
             times.0 += count;
@@ -108,7 +107,7 @@ impl Indexer {
             times.3 += queue_time;
 
             let processed = block_number - last_block;
-            if log_time.elapsed().as_secs() > 20 && processed > 0 {
+            if times.0 > 0 && (log_time.elapsed().as_secs() > 15) {
                 info = self.info().await?;
                 let committed =
                     if info.safe_block > self.db.get_counters().await.last_committed_block {

@@ -1,9 +1,9 @@
 mod checkpoint;
-mod flat_storage;
 mod storage;
 #[cfg(test)]
 mod tests;
 
+use self::checkpoint::CheckpointTrie;
 use crate::index::storage::{Push, Storage};
 use crate::Result;
 use async_trait::async_trait;
@@ -13,9 +13,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use std::{cmp, collections::HashMap};
+use storage::Block;
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
-
-use self::checkpoint::CheckpointTrie;
 
 #[async_trait]
 pub trait Indexed<T> {
@@ -47,8 +46,8 @@ where
         let storage = Storage::new(path, cache_size);
         let last_block = storage.get_counters().await.last_block;
         let counters = Counters {
-            last_indexed_block: last_block,
-            last_committed_block: last_block,
+            last_indexed_block: last_block as u64,
+            last_committed_block: last_block as u64,
         };
         Self {
             pending: RwLock::new(HashMap::new()),
@@ -115,43 +114,45 @@ where
         trace!("committing up to block {}", safe_block);
         let _lock_guard = self.lock.try_lock()?; // Do not allow concurrent commits for now
         let start = Instant::now();
-        let (pending, target, roots) = {
+        let mut index = self.storage.len().await as u64;
+        let start_index = index as usize;
+        let (blocks, target) = {
+            let mut blocks: Vec<Block<T>> = vec![];
             let mut pending_blocks = self.pending.write().await;
             let counters = self.get_counters().await;
             let last_block = pending_blocks.keys().max().cloned().unwrap_or(0);
             let target = cmp::min(safe_block, last_block);
-            let mut pending = vec![];
-            let mut roots = vec![];
-            let mut index = self.storage.len().await as u64;
-            for n in counters.last_committed_block + 1..=target {
-                if let Some(mut a) = pending_blocks.remove(&n) {
+            for number in counters.last_committed_block + 1..=target {
+                if let Some(items) = pending_blocks.remove(&number) {
                     let mut checkpoint = CheckpointTrie::new(index);
-                    let root = checkpoint.bulk_insert(a.iter().map(|a| a.as_ref()).collect())?;
-                    index += a.len() as u64;
-                    roots.push(root);
-                    pending.append(&mut a);
+                    let root_hash =
+                        checkpoint.bulk_insert(items.iter().map(|a| a.as_ref()).collect())?;
+                    index += items.len() as u64;
+                    blocks.push(Block {
+                        items,
+                        root_hash,
+                        number,
+                    });
                 } else {
-                    panic!("commit: missed block {}", n);
+                    panic!("commit: missed block {}", number);
                 }
             }
-            (pending, target, roots)
+            (blocks, target)
         };
 
         let prep_time = start.elapsed().as_micros();
 
+        let len = index as usize - start_index;
         let start = Instant::now();
-        let len = pending.len();
-        self.storage.push_checkpoints(roots).await?;
-        let checkpoints_time = start.elapsed().as_micros();
-
-        let start = Instant::now();
-        self.storage.push(pending, target).await?;
+        self.storage.push(blocks).await?;
         self.counters.write().await.last_committed_block = target;
         let push_time = start.elapsed().as_micros();
-        info!(
-            "Commit: addresses={len} prepare={prep_time}us checkpoints={checkpoints_time}us push={push_time}us average={}",
-            push_time / len as u128
-        );
+        if len > 0 {
+            info!(
+                "Commit: addresses={len} prepare={prep_time}us push={push_time}us average={}",
+                push_time / len as u128
+            );
+        }
         Ok(len)
     }
 }
@@ -176,20 +177,25 @@ where
     }
 
     async fn get(&self, index: usize) -> Result<Option<T>> {
-        let item = if index > self.storage.len().await {
+        trace!(
+            "get index={}, storage.len={}",
+            index,
+            self.storage.len().await
+        );
+        if index > self.storage.len().await {
             // if the index is in the pending queue
-            let mut i = self.storage.len().await;
-            for pending in self.pending.read().await.values().flatten() {
-                if i == index {
-                    Some(*pending);
+            let pending = self.pending.read().await;
+            let mut offset = self.storage.len().await;
+            for (_, items) in pending.iter() {
+                if index < offset + items.len() {
+                    return Ok(Some(items[index - offset]));
                 }
-                i += 1;
+                offset += items.len();
             }
-            None
         } else {
-            Some(self.storage.get(index).await?.unwrap().into())
+            return Ok(Some(self.storage.get(index).await?.unwrap().into()));
         };
-        Ok(item)
+        Ok(None)
     }
 
     async fn index(&self, item: T) -> Result<Option<usize>> {
