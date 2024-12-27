@@ -76,7 +76,7 @@ where
                 page_size: Some(PageSize::Set(16384)),
                 mode: Mode::ReadWrite(ReadWriteOptions {
                     min_size: Some(17179869184),
-                    sync_mode: libmdbx::SyncMode::Durable,
+                    sync_mode: libmdbx::SyncMode::NoMetaSync,
                     ..Default::default()
                 }),
                 ..Default::default()

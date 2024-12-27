@@ -77,15 +77,19 @@ async fn main() -> Result<()> {
     let indexing_loop = tokio::spawn({
         async move {
             loop {
-                let provider = Provider::<Ws>::connect(_provider_url.clone())
-                    .await
-                    .unwrap();
-                let mut indexer = Indexer::new(_db.clone(), provider);
-                if let Err(e) = indexer.run().await {
-                    error!("Indexer failed with error: {}", e);
-                    warn!("Indexer will restart in 5 seconds...");
-                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                match Provider::<Ws>::connect(_provider_url.clone()).await {
+                    Ok(provider) => {
+                        let mut indexer = Indexer::new(_db.clone(), provider);
+                        if let Err(e) = indexer.run().await {
+                            error!("Indexer failed with error: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to connect to provider with error: {}", e);
+                    }
                 }
+                warn!("Indexer will restart in 5 seconds...");
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             }
         }
     });
