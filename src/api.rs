@@ -84,25 +84,19 @@ pub async fn stats(set: &State<SharedIndex<20, Address>>) -> Result<Json<Stats>,
 
 #[get("/resolve/<alias>")]
 pub async fn resolve(alias: &str, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
-    let (index, checksum) = words::to_index(alias.to_string())?;
+    let index = words::to_index(alias.to_string())?;
     if index < PIVOT {
         return Ok(None); // TODO: get mutable monics from the contract
     }
     let stored_index = index - PIVOT;
     let addr = set.get(stored_index).await?;
     if let Some(addr) = addr {
-        if words::checksum(addr) == checksum {
-            let res = AddressInfo {
-                address: addr,
-                index,
-                monic: alias.to_string(),
-            };
-            Ok(Some(Json(res)))
-        } else {
-            Err(ResolveError::WrongChecksum(Json(ErrorDescription {
-                error: "wrong checksum".to_string(),
-            })))
-        }
+        let res = AddressInfo {
+            address: addr,
+            index,
+            monic: alias.to_string(),
+        };
+        Ok(Some(Json(res)))
     } else {
         Ok(None)
     }
@@ -117,7 +111,7 @@ pub async fn index(index: usize, set: &State<SharedIndex<20, Address>>) -> ApiRe
     let info = res.map(|addr| AddressInfo {
         address: addr,
         index,
-        monic: words::to_words(index as u64, words::checksum(addr)),
+        monic: words::to_words(index as u64),
     });
     Ok(info.map(Json))
 }
@@ -129,7 +123,7 @@ pub async fn alias(address: String, set: &State<SharedIndex<20, Address>>) -> Ap
     let res = index.map(|index| AddressInfo {
         address: addr,
         index: index + PIVOT,
-        monic: words::to_words((index + PIVOT) as u64, words::checksum(addr)),
+        monic: words::to_words((index + PIVOT) as u64),
     });
     Ok(res.map(Json))
 }

@@ -24,6 +24,7 @@ log = "0.4.20"
 env_logger = "0.11.5"
 async-trait = "0.1.82"
 tiny-keccak = "2.0.2"
+num-modular = "0.6.1"
 
 [dev-dependencies]
 hex = "0.4.3"
