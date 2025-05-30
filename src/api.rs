@@ -9,8 +9,6 @@ use rocket::{
 };
 use std::{error::Error, str::FromStr};
 
-const PIVOT: usize = 0x40000;
-
 #[derive(Responder, Serialize)]
 #[serde(crate = "rocket::serde")]
 pub struct ErrorDescription {
@@ -85,11 +83,7 @@ pub async fn stats(set: &State<SharedIndex<20, Address>>) -> Result<Json<Stats>,
 #[get("/resolve/<alias>")]
 pub async fn resolve(alias: &str, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
     let index = words::to_index(alias.to_string())?;
-    if index < PIVOT {
-        return Ok(None); // TODO: get mutable monics from the contract
-    }
-    let stored_index = index - PIVOT;
-    let addr = set.get(stored_index).await?;
+    let addr = set.get(index).await?;
     if let Some(addr) = addr {
         let res = AddressInfo {
             address: addr,
@@ -104,10 +98,7 @@ pub async fn resolve(alias: &str, set: &State<SharedIndex<20, Address>>) -> ApiR
 
 #[get("/index/<index>")]
 pub async fn index(index: usize, set: &State<SharedIndex<20, Address>>) -> ApiResponse {
-    if index < PIVOT {
-        return Ok(None);
-    }
-    let res = set.get(index - PIVOT).await?;
+    let res = set.get(index).await?;
     let info = res.map(|addr| AddressInfo {
         address: addr,
         index,
@@ -122,8 +113,8 @@ pub async fn alias(address: String, set: &State<SharedIndex<20, Address>>) -> Ap
     let index = set.index(addr).await?;
     let res = index.map(|index| AddressInfo {
         address: addr,
-        index: index + PIVOT,
-        monic: words::to_words((index + PIVOT) as u64),
+        index,
+        monic: words::to_words((index) as u64),
     });
     Ok(res.map(Json))
 }

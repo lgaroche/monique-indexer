@@ -7,10 +7,9 @@ use log::trace;
 use num_modular::ModularCoreOps;
 use std::error::Error;
 
-// Currently supporting up to 3 words. Closest prime under 2**33 is:
-const MAX_INDEX: u64 = 8_589_934_583;
-const LCG_A: u64 = 537_395_585;
-const LCG_INVERSE: usize = 1_025_113_904;
+const MAX_INDEX: u64 = 8_589_934_592; // 2^^33
+const LCG_A: u64 = 4_198_403; // 2^33 + 2^12 + 3 // shifts each 11-bit word by a different offset
+const LCG_INVERSE: usize = 4_136_049_323; // (LCG_A ^-1) % MAX_INDEX
 
 #[derive(Debug)]
 pub struct WordError;
@@ -24,14 +23,11 @@ impl std::fmt::Display for WordError {
 impl Error for WordError {}
 
 pub fn to_words(index: u64) -> String {
+    trace!("to_words: {}", index);
     assert!(index < MAX_INDEX);
 
-    // Apply a simple linear congruential generator to the index for pseudo-randomness
-    let index = (index * LCG_A + 1) % MAX_INDEX;
-
-    if index == 0 {
-        return ENGLISH[0].to_string();
-    }
+    // Apply a (indexed) linear congruential permutation for pseudo-randomness
+    let index = (index * LCG_A) % MAX_INDEX;
 
     let words_count = if index > 0 {
         (index.ilog2() as f32 / 11.0).floor() as usize + 1
@@ -67,11 +63,9 @@ pub fn to_index(words: String) -> Result<usize> {
         index += value.unwrap() << (11 * p);
     }
 
-    trace!("to_index before reverse lcg: {}", index);
     // Reverse the linear congruential generator
     let modulus = MAX_INDEX as usize;
-    let index = (index.subm(1, &modulus)).mulm(LCG_INVERSE, &modulus);
-    trace!("to_index after reverse lcg: {}", index);
+    let index = index.mulm(LCG_INVERSE, &modulus);
 
     Ok(index)
 }
