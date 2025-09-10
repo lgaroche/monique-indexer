@@ -35,6 +35,7 @@ async fn main() -> Result<()> {
                     &common_args[..],
                     &[
                         arg!(--api "Enable API server"),
+                        arg!(--index "Enable Indexing"),
                         arg!(-p --port <PORT> "API server port")
                             .value_parser(clap::value_parser!(u16)),
                         arg!(--address <ADDRESS> "API server address")
@@ -66,36 +67,42 @@ async fn main() -> Result<()> {
     }
 
     let api = matches.get_flag("api");
+    let index = matches.get_flag("index");
     let port = *matches.get_one::<u16>("port").unwrap_or(&8000);
     let default_address = Ipv4Addr::LOCALHOST;
     let address = matches
         .get_one::<Ipv4Addr>("address")
         .unwrap_or(&default_address);
 
-    let _db = db.clone();
-    let _provider_url = provider_url.clone();
-    let indexing_loop = tokio::spawn({
-        async move {
-            loop {
-                match Provider::<Ws>::connect(_provider_url.clone()).await {
-                    Ok(provider) => {
-                        let mut indexer = Indexer::new(_db.clone(), provider);
-                        if let Err(e) = indexer.run().await {
-                            error!("Indexer failed with error: {}", e);
+    if index {
+        let _db = db.clone();
+        let _provider_url = provider_url.clone();
+        let indexing_loop = tokio::spawn({
+            async move {
+                loop {
+                    match Provider::<Ws>::connect(_provider_url.clone()).await {
+                        Ok(provider) => {
+                            let mut indexer = Indexer::new(_db.clone(), provider);
+                            if let Err(e) = indexer.run().await {
+                                error!("Indexer failed with error: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to connect to provider with error: {}", e);
                         }
                     }
-                    Err(e) => {
-                        error!("Failed to connect to provider with error: {}", e);
-                    }
+                    warn!("Indexer will restart in 5 seconds...");
+                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                 }
-                warn!("Indexer will restart in 5 seconds...");
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             }
+        });
+        if !api {
+            indexing_loop.await?;
+            return Ok(());
         }
-    });
+    }
 
     if !api {
-        indexing_loop.await?;
         return Ok(());
     }
 
